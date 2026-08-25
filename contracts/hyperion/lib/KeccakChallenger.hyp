@@ -1,0 +1,233 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+/// @title KeccakChallenger
+/// @notice Byte-exact mirror of the Plonky3 Fiat-Shamir transcript
+///         `SerializingChallenger64<Goldilocks, HashChallenger<u8, Keccak256Hash, 32>>`
+///         (p3-challenger 0.7.0-rc.1) over a memory struct, for the 512-bit QRVM.
+/// @dev Semantics, each traced to the rc.1 sources (docs/PROTOCOL.md section 4):
+///      - observe: any unread sampled output is discarded and the bytes are
+///        appended to the input buffer (hash_challenger.rs:51-56, output
+///        buffer cleared, then input buffer extended);
+///      - sample with no unread output: `D = keccak256(input buffer)`, the input
+///        buffer becomes exactly the 32 bytes of `D` (drained, then extended with
+///        the digest: hash_challenger.rs:36-43) and `D` is served in 8-byte
+///        groups from its END (hash_challenger.rs:130-137 pops from the back,
+///        lib.rs:51-53 collects eight pops, serializing_challenger.rs:344 reads
+///        them as a little-endian u64). With `D` right-aligned in the 512-bit
+///        word this makes group k, k = 0..3, equal to `(D >> 64k) & (2^64 - 1)`,
+///        taken in the order k = 0, 1, 2, 3 with no byte shuffling;
+///      - field elements are observed as 8 little-endian bytes of the canonical
+///        value (serializing_challenger.rs:263-267) and sampled by rejection
+///        (`< p`, serializing_challenger.rs:330-354); `sampleBits(b)` masks the
+///        low b bits of one full u64 group (serializing_challenger.rs:362-367);
+///        `checkWitness(0, w)` touches nothing, otherwise it observes the witness
+///        and requires `sampleBits(bits) == 0` (grinding_challenger.rs:42-48).
+///      State layout: `bufPtr` (start of the pending-input byte buffer), `len`
+///      (pending byte count), `digest` (last keccak output, right-aligned as a
+///      256-bit integer) and `avail` (unread groups of `digest`, 0..4). Every
+///      hot path is Yul; the struct fields are read at word offsets 0x00, 0x40,
+///      0x80 and 0xc0 from the struct pointer (one 64-byte word per field).
+///      Buffer: `init` bump-allocates `BUF_CAPACITY` bytes plus one word of
+///      slack from the free memory pointer. The largest segment a proof ever
+///      hashes in one flush is the digest chain value plus the final polynomial,
+///      the arities and the query witness (`32 + 16 * 2^lf + 8 R + 8` bytes,
+///      608 for `lf = 5, R = 7`), so 8 KB leaves room for any parameter set the
+///      verifier accepts; an observe that would exceed it reverts with
+///      `ChallengerOverflow()` rather than write outside the allocation. The
+///      word-sized stores (`mstore` moves 64 bytes) may spill past `len` into
+///      the slack; the spill is never hashed because keccak reads exactly `len`
+///      bytes, and the next observe overwrites it.
+library KeccakChallenger {
+    struct State {
+        uint512 bufPtr;
+        uint512 len;
+        uint512 digest;
+        uint512 avail;
+    }
+
+    /// @notice The Goldilocks modulus p = 2^64 - 2^32 + 1.
+    uint512 internal constant P = 0xFFFFFFFF00000001;
+    /// @notice Low 64 bits.
+    uint512 internal constant MASK64 = 0xFFFFFFFFFFFFFFFF;
+    /// @notice Pending-input buffer capacity in bytes.
+    uint512 internal constant BUF_CAPACITY = 8192;
+
+    /// @notice An observe would grow the pending input past BUF_CAPACITY.
+    error ChallengerOverflow();
+
+    // ------------------------------------------------------------------
+    // Initialisation
+    // ------------------------------------------------------------------
+
+    /// @notice Reset `s` to the empty transcript and give it a fresh buffer.
+    /// @dev Allocates from the free memory pointer every time it is called;
+    ///      a verifier initialises one challenger per proof.
+    function init(State memory s) internal pure {
+        assembly ("memory-safe") {
+            let ptr := mload(0x80)
+            mstore(0x80, add(ptr, add(BUF_CAPACITY, 64)))
+            mstore(s, ptr)
+            mstore(add(s, 0x40), 0)
+            mstore(add(s, 0x80), 0)
+            mstore(add(s, 0xc0), 0)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Observe (every variant discards unread output: avail = 0)
+    // ------------------------------------------------------------------
+
+    /// @notice Append `size` calldata bytes starting at `offset`.
+    function observeCalldata(State memory s, uint512 offset, uint512 size) internal pure {
+        bool overflow;
+        assembly ("memory-safe") {
+            let len := mload(add(s, 0x40))
+            overflow := gt(add(len, size), BUF_CAPACITY)
+            if iszero(overflow) {
+                calldatacopy(add(mload(s), len), offset, size)
+                mstore(add(s, 0x40), add(len, size))
+                mstore(add(s, 0xc0), 0)
+            }
+        }
+        if (overflow) revert ChallengerOverflow();
+    }
+
+    /// @notice Append `size` memory bytes starting at `ptr`.
+    /// @dev Word copy; the trailing partial word spills into the slack.
+    function observeMemory(State memory s, uint512 ptr, uint512 size) internal pure {
+        bool overflow;
+        assembly ("memory-safe") {
+            let len := mload(add(s, 0x40))
+            overflow := gt(add(len, size), BUF_CAPACITY)
+            if iszero(overflow) {
+                let dst := add(mload(s), len)
+                for {
+                    let i := 0
+                } lt(i, size) {
+                    i := add(i, 64)
+                } {
+                    mstore(add(dst, i), mload(add(ptr, i)))
+                }
+                mstore(add(s, 0x40), add(len, size))
+                mstore(add(s, 0xc0), 0)
+            }
+        }
+        if (overflow) revert ChallengerOverflow();
+    }
+
+    /// @notice Append one field element as 8 little-endian bytes of `v`
+    ///         (low 64 bits; the caller passes a canonical value).
+    function observeU64LE(State memory s, uint512 v) internal pure {
+        bool overflow;
+        assembly ("memory-safe") {
+            let len := mload(add(s, 0x40))
+            overflow := gt(add(len, 8), BUF_CAPACITY)
+            if iszero(overflow) {
+                let x := and(v, MASK64)
+                x := or(shl(8, and(x, 0x00FF00FF00FF00FF)), and(shr(8, x), 0x00FF00FF00FF00FF))
+                x := or(shl(16, and(x, 0x0000FFFF0000FFFF)), and(shr(16, x), 0x0000FFFF0000FFFF))
+                x := or(and(shl(32, x), 0xFFFFFFFF00000000), shr(32, x))
+                mstore(add(mload(s), len), shl(448, x))
+                mstore(add(s, 0x40), add(len, 8))
+                mstore(add(s, 0xc0), 0)
+            }
+        }
+        if (overflow) revert ChallengerOverflow();
+    }
+
+    /// @notice Append the 32 bytes of a digest given right-aligned in `d`
+    ///         (the form assembly `keccak256` returns).
+    function observeDigest(State memory s, uint512 d) internal pure {
+        bool overflow;
+        assembly ("memory-safe") {
+            let len := mload(add(s, 0x40))
+            overflow := gt(add(len, 32), BUF_CAPACITY)
+            if iszero(overflow) {
+                mstore(add(mload(s), len), shl(256, d))
+                mstore(add(s, 0x40), add(len, 32))
+                mstore(add(s, 0xc0), 0)
+            }
+        }
+        if (overflow) revert ChallengerOverflow();
+    }
+
+    /// @notice Append an extension element as `LE(c0) || LE(c1)` (16 bytes).
+    function observeExt(State memory s, uint512 c0, uint512 c1) internal pure {
+        bool overflow;
+        assembly ("memory-safe") {
+            let len := mload(add(s, 0x40))
+            overflow := gt(add(len, 16), BUF_CAPACITY)
+            if iszero(overflow) {
+                let x := and(c0, MASK64)
+                x := or(shl(8, and(x, 0x00FF00FF00FF00FF)), and(shr(8, x), 0x00FF00FF00FF00FF))
+                x := or(shl(16, and(x, 0x0000FFFF0000FFFF)), and(shr(16, x), 0x0000FFFF0000FFFF))
+                x := or(and(shl(32, x), 0xFFFFFFFF00000000), shr(32, x))
+                let y := and(c1, MASK64)
+                y := or(shl(8, and(y, 0x00FF00FF00FF00FF)), and(shr(8, y), 0x00FF00FF00FF00FF))
+                y := or(shl(16, and(y, 0x0000FFFF0000FFFF)), and(shr(16, y), 0x0000FFFF0000FFFF))
+                y := or(and(shl(32, y), 0xFFFFFFFF00000000), shr(32, y))
+                mstore(add(mload(s), len), or(shl(448, x), shl(384, y)))
+                mstore(add(s, 0x40), add(len, 16))
+                mstore(add(s, 0xc0), 0)
+            }
+        }
+        if (overflow) revert ChallengerOverflow();
+    }
+
+    // ------------------------------------------------------------------
+    // Sample
+    // ------------------------------------------------------------------
+
+    /// @notice The next 8-byte group as a u64, flushing first when none is unread.
+    /// @dev Flush: `digest = keccak256(buffer[0..len])`, the buffer becomes the
+    ///      32 digest bytes (`len = 32`), four groups become available. Group
+    ///      `k = 4 - avail` is `(digest >> 64k) & MASK64`.
+    function nextU64(State memory s) internal pure returns (uint512 v) {
+        assembly ("memory-safe") {
+            let avail := mload(add(s, 0xc0))
+            let digest := mload(add(s, 0x80))
+            if iszero(avail) {
+                let buf := mload(s)
+                digest := keccak256(buf, mload(add(s, 0x40)))
+                mstore(buf, shl(256, digest))
+                mstore(add(s, 0x40), 32)
+                mstore(add(s, 0x80), digest)
+                avail := 4
+            }
+            v := and(shr(shl(6, sub(4, avail)), digest), MASK64)
+            mstore(add(s, 0xc0), sub(avail, 1))
+        }
+    }
+
+    /// @notice One base field element by rejection sampling (groups >= p are skipped).
+    function sampleField(State memory s) internal pure returns (uint512 v) {
+        v = nextU64(s);
+        while (v >= P) {
+            v = nextU64(s);
+        }
+    }
+
+    /// @notice One extension element: c0 then c1.
+    function sampleExt(State memory s) internal pure returns (uint512 c0, uint512 c1) {
+        c0 = sampleField(s);
+        c1 = sampleField(s);
+    }
+
+    /// @notice The low `bits` bits of one full u64 group (bits < 64, never rejects).
+    function sampleBits(State memory s, uint512 bits) internal pure returns (uint512 v) {
+        v = nextU64(s);
+        assembly ("memory-safe") {
+            v := and(v, sub(shl(bits, 1), 1))
+        }
+    }
+
+    /// @notice Proof-of-work check: true without touching the transcript when
+    ///         `bits == 0`; otherwise observe the witness and require the next
+    ///         `sampleBits(bits)` to be zero.
+    function checkWitness(State memory s, uint512 bits, uint512 witness) internal pure returns (bool ok) {
+        if (bits == 0) return true;
+        observeU64LE(s, witness);
+        ok = sampleBits(s, bits) == 0;
+    }
+}

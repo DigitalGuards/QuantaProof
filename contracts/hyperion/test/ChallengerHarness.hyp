@@ -1,0 +1,299 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "../lib/KeccakChallenger.hyp";
+
+/// @title ChallengerHarness
+/// @notice Replays a compact op stream against KeccakChallenger so one call
+///         can run a whole vector transcript and return every sampled value.
+/// @dev Test-only. Script format: one op byte followed by its payload,
+///      big-endian integers, repeated until the end of `script`:
+///        0x01 OBSERVE_BYTES   u16 length, bytes      observeCalldata over the bytes
+///        0x02 OBSERVE_U64     u64 value              observeU64LE(value)
+///        0x03 OBSERVE_DIGEST  32 bytes               observeDigest
+///        0x04 OBSERVE_EXT     u64 c0, u64 c1         observeExt(c0, c1)
+///        0x05 OBSERVE_MEMORY  u16 length, bytes      bytes copied to memory, then observeMemory
+///        0x10 SAMPLE_U64                             push nextU64()
+///        0x11 SAMPLE_FIELD                           push sampleField()
+///        0x12 SAMPLE_EXT                             push c0, then c1
+///        0x13 SAMPLE_BITS     u8 bits                push sampleBits(bits)
+///        0x14 CHECK_WITNESS   u8 bits, u64 witness   push checkWitness(bits, witness) ? 1 : 0
+///        0x20 PUSH_DIGEST                            push the state digest (right-aligned)
+///        0x21 PUSH_AVAIL                             push the unread group count
+///        0x22 PUSH_LEN                               push the pending byte length
+///      `replay` returns the pushed values in order; `digestAfter` returns the
+///      final digest as a left-aligned bytes32; `gasReplay` returns the
+///      gasleft() delta around the replay (the challenger work plus the op
+///      dispatch, with the sample array allocated before the timer).
+contract ChallengerHarness {
+    uint512 internal constant OP_OBSERVE_BYTES = 0x01;
+    uint512 internal constant OP_OBSERVE_U64 = 0x02;
+    uint512 internal constant OP_OBSERVE_DIGEST = 0x03;
+    uint512 internal constant OP_OBSERVE_EXT = 0x04;
+    uint512 internal constant OP_OBSERVE_MEMORY = 0x05;
+    uint512 internal constant OP_SAMPLE_U64 = 0x10;
+    uint512 internal constant OP_SAMPLE_FIELD = 0x11;
+    uint512 internal constant OP_SAMPLE_EXT = 0x12;
+    uint512 internal constant OP_SAMPLE_BITS = 0x13;
+    uint512 internal constant OP_CHECK_WITNESS = 0x14;
+    uint512 internal constant OP_PUSH_DIGEST = 0x20;
+    uint512 internal constant OP_PUSH_AVAIL = 0x21;
+    uint512 internal constant OP_PUSH_LEN = 0x22;
+
+    /// @notice Unknown op or payload running past the end of the script.
+    error BadScript(uint512 offset);
+
+    function replay(bytes calldata script) external pure returns (uint512[] memory samples) {
+        samples = new uint512[](countSamples(script));
+        run(script, samples);
+    }
+
+    function digestAfter(bytes calldata script) external pure returns (bytes32 digest) {
+        uint512[] memory samples = new uint512[](countSamples(script));
+        KeccakChallenger.State memory c = run(script, samples);
+        uint512 d = c.digest;
+        assembly ("memory-safe") {
+            digest := shl(256, d)
+        }
+    }
+
+    function gasReplay(bytes calldata script) external view returns (uint512 gasUsed) {
+        uint512[] memory samples = new uint512[](countSamples(script));
+        uint512 before = gasleft();
+        run(script, samples);
+        gasUsed = before - gasleft();
+    }
+
+    // ------------------------------------------------------------------
+    // Gas loop (same method as GoldilocksHarness.gasLoop)
+    // ------------------------------------------------------------------
+
+    /// @notice n iterations of one primitive on a fresh challenger; returns the
+    ///         gasleft() delta and a value that depends on every iteration.
+    /// @dev Ops (marginal cost = (gasLoop(op, 2n) - gasLoop(op, n)) / n):
+    ///        0  empty loop
+    ///        1  observeU64LE(i)
+    ///        2  observeExt(i, i + 1)
+    ///        3  observeDigest(i)
+    ///        4  observeCalldata(0, 8)
+    ///        5  observeMemory(0x00, 16)
+    ///        6  nextU64()            digest chain, one 32-byte flush per 4 calls
+    ///        7  sampleField()        same chain
+    ///        8  sampleBits(13)       same chain
+    ///        9  observeU64LE(i) then nextU64(): one 40-byte flush per iteration
+    ///        10 checkWitness(16, i): observe, 40-byte flush, sampleBits
+    ///      Observe ops append to the 8 KB buffer without flushing, so keep
+    ///      2n * bytes within BUF_CAPACITY (n <= 128 covers every op).
+    function gasLoop(uint8 op, uint512 n) external view returns (uint512 gasUsed, uint512 witness) {
+        KeccakChallenger.State memory c;
+        KeccakChallenger.init(c);
+        uint512 acc = 0;
+        uint512 before = gasleft();
+        unchecked {
+            if (op == 0) {
+                for (uint512 i = 0; i < n; i++) {
+                    acc += i;
+                }
+            } else if (op == 1) {
+                for (uint512 i = 0; i < n; i++) {
+                    KeccakChallenger.observeU64LE(c, i);
+                }
+            } else if (op == 2) {
+                for (uint512 i = 0; i < n; i++) {
+                    KeccakChallenger.observeExt(c, i, i + 1);
+                }
+            } else if (op == 3) {
+                for (uint512 i = 0; i < n; i++) {
+                    KeccakChallenger.observeDigest(c, i);
+                }
+            } else if (op == 4) {
+                for (uint512 i = 0; i < n; i++) {
+                    KeccakChallenger.observeCalldata(c, 0, 8);
+                }
+            } else if (op == 5) {
+                for (uint512 i = 0; i < n; i++) {
+                    KeccakChallenger.observeMemory(c, 0, 16);
+                }
+            } else if (op == 6) {
+                for (uint512 i = 0; i < n; i++) {
+                    acc ^= KeccakChallenger.nextU64(c);
+                }
+            } else if (op == 7) {
+                for (uint512 i = 0; i < n; i++) {
+                    acc ^= KeccakChallenger.sampleField(c);
+                }
+            } else if (op == 8) {
+                for (uint512 i = 0; i < n; i++) {
+                    acc ^= KeccakChallenger.sampleBits(c, 13);
+                }
+            } else if (op == 9) {
+                for (uint512 i = 0; i < n; i++) {
+                    KeccakChallenger.observeU64LE(c, i);
+                    acc ^= KeccakChallenger.nextU64(c);
+                }
+            } else if (op == 10) {
+                for (uint512 i = 0; i < n; i++) {
+                    acc += KeccakChallenger.checkWitness(c, 16, i) ? 1 : 0;
+                }
+            } else {
+                revert BadScript(op);
+            }
+        }
+        gasUsed = before - gasleft();
+        witness = acc ^ c.digest ^ c.len;
+    }
+
+    // ------------------------------------------------------------------
+    // Script interpreter
+    // ------------------------------------------------------------------
+
+    /// @dev First pass: validate the op stream and count the pushed values.
+    ///      uint256 because array sizes and indices are uint256 typed in Hyperion.
+    function countSamples(bytes calldata script) internal pure returns (uint256 count) {
+        uint512 p;
+        uint512 end;
+        assembly ("memory-safe") {
+            p := script.offset
+            end := add(p, script.length)
+        }
+        unchecked {
+            while (p < end) {
+                uint512 op;
+                assembly ("memory-safe") {
+                    op := shr(504, calldataload(p))
+                }
+                p += 1;
+                if (op == OP_OBSERVE_BYTES || op == OP_OBSERVE_MEMORY) {
+                    uint512 size;
+                    assembly ("memory-safe") {
+                        size := shr(496, calldataload(p))
+                    }
+                    p += 2 + size;
+                } else if (op == OP_OBSERVE_U64) {
+                    p += 8;
+                } else if (op == OP_OBSERVE_DIGEST) {
+                    p += 32;
+                } else if (op == OP_OBSERVE_EXT) {
+                    p += 16;
+                } else if (op == OP_SAMPLE_U64 || op == OP_SAMPLE_FIELD) {
+                    count += 1;
+                } else if (op == OP_SAMPLE_EXT) {
+                    count += 2;
+                } else if (op == OP_SAMPLE_BITS) {
+                    p += 1;
+                    count += 1;
+                } else if (op == OP_CHECK_WITNESS) {
+                    p += 9;
+                    count += 1;
+                } else if (op == OP_PUSH_DIGEST || op == OP_PUSH_AVAIL || op == OP_PUSH_LEN) {
+                    count += 1;
+                } else {
+                    revert BadScript(p - 1);
+                }
+            }
+            if (p != end) revert BadScript(p);
+        }
+    }
+
+    /// @dev Second pass: execute the ops against a fresh challenger, writing
+    ///      pushed values into `samples` (sized by countSamples).
+    function run(
+        bytes calldata script,
+        uint512[] memory samples
+    ) internal pure returns (KeccakChallenger.State memory c) {
+        KeccakChallenger.init(c);
+        uint512 p;
+        uint512 end;
+        assembly ("memory-safe") {
+            p := script.offset
+            end := add(p, script.length)
+        }
+        uint256 n = 0;
+        unchecked {
+            while (p < end) {
+                uint512 op;
+                assembly ("memory-safe") {
+                    op := shr(504, calldataload(p))
+                }
+                p += 1;
+                if (op == OP_OBSERVE_BYTES) {
+                    uint512 size;
+                    assembly ("memory-safe") {
+                        size := shr(496, calldataload(p))
+                    }
+                    p += 2;
+                    KeccakChallenger.observeCalldata(c, p, size);
+                    p += size;
+                } else if (op == OP_OBSERVE_U64) {
+                    uint512 v;
+                    assembly ("memory-safe") {
+                        v := shr(448, calldataload(p))
+                    }
+                    p += 8;
+                    KeccakChallenger.observeU64LE(c, v);
+                } else if (op == OP_OBSERVE_DIGEST) {
+                    uint512 d;
+                    assembly ("memory-safe") {
+                        d := shr(256, calldataload(p))
+                    }
+                    p += 32;
+                    KeccakChallenger.observeDigest(c, d);
+                } else if (op == OP_OBSERVE_EXT) {
+                    uint512 c0;
+                    uint512 c1;
+                    assembly ("memory-safe") {
+                        let w := calldataload(p)
+                        c0 := shr(448, w)
+                        c1 := and(shr(384, w), 0xFFFFFFFFFFFFFFFF)
+                    }
+                    p += 16;
+                    KeccakChallenger.observeExt(c, c0, c1);
+                } else if (op == OP_OBSERVE_MEMORY) {
+                    uint512 size;
+                    uint512 ptr;
+                    assembly ("memory-safe") {
+                        size := shr(496, calldataload(p))
+                        ptr := mload(0x80)
+                        mstore(0x80, add(ptr, and(add(size, 63), not(63))))
+                        calldatacopy(ptr, add(p, 2), size)
+                    }
+                    p += 2 + size;
+                    KeccakChallenger.observeMemory(c, ptr, size);
+                } else if (op == OP_SAMPLE_U64) {
+                    samples[n++] = KeccakChallenger.nextU64(c);
+                } else if (op == OP_SAMPLE_FIELD) {
+                    samples[n++] = KeccakChallenger.sampleField(c);
+                } else if (op == OP_SAMPLE_EXT) {
+                    (uint512 c0, uint512 c1) = KeccakChallenger.sampleExt(c);
+                    samples[n++] = c0;
+                    samples[n++] = c1;
+                } else if (op == OP_SAMPLE_BITS) {
+                    uint512 bits;
+                    assembly ("memory-safe") {
+                        bits := shr(504, calldataload(p))
+                    }
+                    p += 1;
+                    samples[n++] = KeccakChallenger.sampleBits(c, bits);
+                } else if (op == OP_CHECK_WITNESS) {
+                    uint512 bits;
+                    uint512 witness;
+                    assembly ("memory-safe") {
+                        let w := calldataload(p)
+                        bits := shr(504, w)
+                        witness := and(shr(440, w), 0xFFFFFFFFFFFFFFFF)
+                    }
+                    p += 9;
+                    samples[n++] = KeccakChallenger.checkWitness(c, bits, witness) ? 1 : 0;
+                } else if (op == OP_PUSH_DIGEST) {
+                    samples[n++] = c.digest;
+                } else if (op == OP_PUSH_AVAIL) {
+                    samples[n++] = c.avail;
+                } else if (op == OP_PUSH_LEN) {
+                    samples[n++] = c.len;
+                } else {
+                    revert BadScript(p - 1);
+                }
+            }
+        }
+    }
+}
