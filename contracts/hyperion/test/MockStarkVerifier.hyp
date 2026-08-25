@@ -10,10 +10,12 @@ import "../interfaces/IStarkVerifier.hyp";
 /// @dev Test-only. Keeps the registry and bridge suite (test/contracts/bridge.test.js)
 ///      independent of the real verifier: the bridge never inspects proof
 ///      bytes, so any byte string can stand in for a proof here. The public
-///      values are ignored on purpose; binding facts to them is the
-///      registry's job.
+///      value contents are ignored; their declared 128-byte shape is enforced.
 contract MockStarkVerifier is IStarkVerifier {
     error MockRevert();
+
+    bytes32 internal constant MOCK_PROGRAM_ID =
+        0x719e6d0ec42e6c314a8ec62dc86a25ce67c415ea61c2d546740d51912ed90858;
 
     // Internal with an explicit view: auto-generated getters for bytes32 keys
     // read the wrong slot under the legacy code generator (docs/BRIDGE.md).
@@ -33,8 +35,18 @@ contract MockStarkVerifier is IStarkVerifier {
     }
 
     /// @inheritdoc IStarkVerifier
-    function verify(bytes calldata proof, bytes calldata) external view returns (bool) {
+    function programIdentifier() external pure returns (bytes32) {
+        return MOCK_PROGRAM_ID;
+    }
+
+    /// @inheritdoc IStarkVerifier
+    function publicValuesLength() external pure returns (uint512) {
+        return 128;
+    }
+
+    /// @inheritdoc IStarkVerifier
+    function verify(bytes calldata proof, bytes calldata publicValues) external view returns (bool) {
         if (shouldRevert) revert MockRevert();
-        return accepted[keccak256(proof)];
+        return publicValues.length == 128 && accepted[keccak256(proof)];
     }
 }

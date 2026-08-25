@@ -41,6 +41,7 @@ const VERIFIER_FILE = 'StarkVerifier.hyp';
 const GAS_METER_FILE = 'StarkVerifierGasMeter.hyp';
 const SIG_VERIFY = 'verify(bytes,bytes)';
 const SIG_PARAMS = 'PARAMS()';
+const SIG_PROGRAM_ID = 'programIdentifier()';
 
 const PRESET_KEYS = [
   'logBlowup',
@@ -89,6 +90,16 @@ const GAS_VECTORS = [
 
 function presetKey(cfg) {
   return PRESET_KEYS.map((k) => cfg[k]).join('/');
+}
+
+function programIdentifier(cfg) {
+  return abi.keccak256Hex(
+    abi.concatBytes([
+      new TextEncoder().encode('QSTARK-FIBONACCI-v1'),
+      abi.encodeUint(24),
+      ...PRESET_KEYS.map((key) => abi.encodeUint(cfg[key])),
+    ])
+  );
 }
 
 // StarkVerifier.hyp with its six preset constants replaced by `cfg`.
@@ -178,7 +189,7 @@ test('StarkVerifier', { skip, timeout: 3600000 }, async (t) => {
   );
 
   if (process.env.STARK_SKIP_MUTATIONS !== '1') {
-    await t.test('PARAMS() echoes every preset', async () => {
+    await t.test('PARAMS() and programIdentifier() bind every preset', async () => {
       for (const { cfg } of presets.values()) {
         const verifier = await verifierFor(cfg);
         const params = await verifier.call(SIG_PARAMS, [], Array(6).fill('uint512'));
@@ -193,6 +204,11 @@ test('StarkVerifier', { skip, timeout: 3600000 }, async (t) => {
             cfg.logFinalPolyLen,
           ].map(BigInt),
           `PARAMS of preset ${presetKey(cfg)}`
+        );
+        assert.equal(
+          await verifier.callOne(SIG_PROGRAM_ID, [], 'bytes32'),
+          programIdentifier(cfg),
+          `programIdentifier of preset ${presetKey(cfg)}`
         );
       }
       const sizes = [...deployed.values()].map((v) => v.runtimeBytes);

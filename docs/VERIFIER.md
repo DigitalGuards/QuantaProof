@@ -327,14 +327,14 @@ tables; the cap is 24,576 bytes):
 
 | Contract              | runs 200 (default) | runs 1000000 | via-IR (runs 200) |
 | --------------------- | -----------------: | -----------: | ----------------: |
-| StarkVerifier         |             14,458 |       17,859 |            13,766 |
+| StarkVerifier         |             14,646 |       18,298 |            14,111 |
 | StarkVerifierGasMeter |              1,342 |        1,959 |             1,220 |
-| StarkFactRegistry     |              1,423 |        2,266 |             1,356 |
+| StarkFactRegistry     |              1,810 |        2,643 |             1,684 |
 | StateBridge           |              5,437 |        8,679 |             4,373 |
 | FriHarness (test)     |             18,581 |       22,758 |            18,366 |
 
-The verifier fits the cap with 10 KB of headroom at the default setting and
-6.7 KB at runs 1000000, so the split of a second `FriPcsVerifier` contract at
+The verifier fits the cap with 9,930 bytes of headroom at the default setting
+and 6,278 bytes at runs 1000000, so the split of a second `FriPcsVerifier` contract at
 the `pcs.verify` boundary (challenger state serialised across a STATICCALL)
 was unnecessary and was not implemented. Should a second AIR push the size
 over the cap, the boundary is ready: `StarkVerifierCore._absorbInstance` ends

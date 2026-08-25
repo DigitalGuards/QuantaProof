@@ -59,11 +59,11 @@ use it, and never rely on `PATH`.
 The compiler build fixes the word width and the precompile slots behind the
 `shake256` and `mldsa87verify` builtins, which is why the manifest records the
 exact version string. Two defects of its legacy code generator are documented
-in `docs/compiler/HYPC-LEGACY-CODEGEN-DEFECTS.md`; the bridge contracts
-therefore compile with `--via-ir` (`scripts/lib/presets.js::compileBridge`
-forces it) while the verifier uses the legacy pipeline at optimizer runs 200
-by default. `HYPERION_OPTIMIZE_RUNS` and `HYPERION_VIA_IR` change the setting
-for `npm run compile`, `npm run deploy` and the contract suites alike.
+in `docs/compiler/HYPC-LEGACY-CODEGEN-DEFECTS.md`. Bridge deployment and the
+bridge contract suite force `--via-ir` through
+`scripts/lib/presets.js::compileBridge`; the verifier uses the legacy pipeline
+at optimizer runs 200 by default. `HYPERION_OPTIMIZE_RUNS` and
+`HYPERION_VIA_IR` change the requested compile setting.
 
 ## Execution client: gqrl from go-qrl-stark
 
@@ -74,6 +74,35 @@ go-qrl-stark/build/bin/gqrl version
 
 `go.mod` asks for a newer Go than most hosts carry; `GOTOOLCHAIN=auto` downloads
 it on first use. The same source builds the Docker image for Kurtosis.
+
+## Provenance and full protocol gate
+
+`npm run check:provenance` fails unless both source trees are clean and the
+embedded revision in each configured binary matches its source `HEAD`. It
+writes `build/toolchain-provenance.json` on success or failure. The defaults
+use sibling source trees; maintained runners can set all four paths explicitly:
+
+```bash
+HYPERION_SOURCE_DIR=../hyperion-stark \
+HYPERION_COMPILER=../hyperion-stark/build/hypc/hypc \
+GO_QRL_SOURCE_DIR=../go-qrl-stark \
+GQRL_BIN=../go-qrl-stark/build/bin/gqrl \
+npm run check:provenance
+
+STARK_RPC_URL=http://127.0.0.1:8545 npm run test:protocol
+```
+
+`test:protocol` accepts only the developer chain 1337 or Kurtosis chain 3151909. It repeats provenance checking, compiles and checks contract sizes,
+runs the Node unit and mutation suites, prose and formatting checks, Rust
+formatting, clippy and release tests, then runs every live QRVM contract suite
+with full vector selection, the mutation matrix and 10,000 randomized field
+operations per arithmetic suite. The result is written to
+`build/protocol-gate.json`, including failures.
+
+`.github/workflows/protocol-gate.yml` schedules the same gate on a dedicated
+runner labeled `quantastark`. Repository variables provide its four local
+toolchain paths. Pull requests do not execute on that runner; reviewed revisions
+can use `workflow_dispatch`.
 
 ## Fast path: the gqrl developer node
 
@@ -147,7 +176,7 @@ Status: exercised end to end on the workstation on 2026-08-25. Validation record
 - Images: `qrl2-stark/go-qrl:stark` 35f343ac214c (label `revision=b19c839…`, `source-state=clean`), `qrl2-stark/qrysm:beacon-chain-64` 2291f5a9bd5e and `validator-64` 0f80b9cd042b (re-tagged from the QNS builds of `cyyber/qrysm@b53fd7c4`), `qrl2-stark/qrysm:qrl-genesis-generator-64` 14bab0a0877c (same source build of `qrl-genesis-generator@6a11fbce`, relabelled with its revision so the start script accepts it).
 - Enclave `qrl2-stark` on chain 3151909 next to the running `qrl2-qns` enclave; `qrl_chainId` 0x301825, blocks advancing every slot, latest block `gasLimit` 0x1312d00 (20,000,000).
 - `STARK_ALLOW_WILDCARD_BIND=1` was required: the Kurtosis port publisher binds the execution ports with an explicit `0.0.0.0` host address, which the loopback daemon default cannot override (see "Docker loopback binding" below). The workstation runs WSL2 in NAT mode, so those ports are reachable from the Windows host only.
-- `npm run deploy -- --preset all` with `STARK_DEPLOY_BRIDGE=1` from fixture account 0: 16 verifiers, 16 gas meters, the fact registry and the bridge, recorded in `config/local-stark.json`.
+- `npm run deploy -- --preset all` from fixture account 0: 16 verifiers and 16 gas meters recorded in `config/local-stark.json`. The historical run also deployed a bridge bound to the 24-byte Fibonacci verifier. The current compatibility guard rejects that binding, so the historical bridge addresses are superseded and provide no batch-bridge evidence.
 - `npm run verify:proof -- --vector test/vectors/large/fib_c3_n20.json`: transaction `0xc61cfadf…` in block 74, status 1, `verifyAndLog` gasUsed 4,500,257 (the developer-node figure 4,463,257 plus the meter's one-time storage warm-up), inner gas 2,710,754, identical to the developer node.
 - Gas report: `npm run gas:report -- --store build/gas-report-kurtosis` re-measured all 44 cells on chain 3151909 at optimizer runs 200; proof bytes, calldata gas, `estimateGas`, `gasUsed` and inner gas are identical to the developer-node cells in `docs/GAS-REPORT.md` for every vector, which keeps the three-setting developer-node render as the published report (the Kurtosis store stays local under `build/gas-report-kurtosis/`).
 
@@ -266,7 +295,7 @@ STARK_CONFIG=config/local-stark.json npm run gas:report
 
 `deploy` (`scripts/deploy.js`) asserts the chain id, compiles
 `StarkVerifier.hyp` once per requested preset with the six preset constants
-substituted (`--preset <name|all>`, default `c3`, the committed constants;
+substituted (`--preset <name|all|none>`, default `c3`, the committed constants;
 `scripts/lib/presets.js` carries the table of sixteen presets and the
 substitution), refuses a runtime above 24,576 bytes, estimates gas with a 20
 percent margin capped at the block gas limit, deploys the verifier and then
@@ -277,8 +306,20 @@ into the record (presets from earlier runs are kept, the previous record moves
 to `previousContracts`). `STARK_DEPLOY_BRIDGE=1` (or `--bridge`) adds
 `StarkFactRegistry(verifier, programId)` and
 `StateBridge(registry, programId, verifier, 0x00..00)` compiled through the IR
-pipeline, bound to the c3 verifier of the run (or the first deployed preset),
-with `programId = keccak256("fibonacci-<preset>-v1")`, under `contracts.bridge`.
+pipeline. It requires `--bridge-verifier` and `--bridge-program-id`, or the
+equivalent `STARK_BRIDGE_VERIFIER` and `STARK_BRIDGE_PROGRAM_ID` environment
+variables. The verifier must have code and return 128 from
+`publicValuesLength()`, and its `programIdentifier()` must equal the requested
+program id. The Fibonacci verifiers return 24 and cannot back the bridge.
+Bridge-only mode selects `--preset none` automatically; pass an explicit preset
+to deploy Fibonacci benchmark verifiers in the same run. The deployment is
+recorded under `contracts.bridge`.
+
+All named FRI presets are experimental benchmark profiles. Deployment on chain
+1337 and the QuantaStark Kurtosis chain 3151909 is enabled by default. Another
+chain requires `--allow-experimental-soundness` or
+`STARK_ALLOW_EXPERIMENTAL_SOUNDNESS=1` for benchmark verifiers or the bridge
+skeleton; see `docs/SECURITY-STATUS.md`.
 
 `verify:proof` (`scripts/verify-proof.js`) derives the preset from the vector's
 `config`, picks that verifier and gas meter from the record, hand-encodes

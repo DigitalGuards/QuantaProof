@@ -11,5 +11,13 @@ pragma hyperion >=0.0;
 ///      false; the boolean exists so callers can treat a non-reverting call
 ///      as accepted without decoding revert data.
 interface IStarkVerifier {
+    /// @notice Identifier of the AIR, proof protocol, parameters and public-value schema.
+    function programIdentifier() external view returns (bytes32);
+
+    /// @notice Exact public-value byte length accepted by this verifier.
+    /// @dev Consumers use this to reject an AIR whose statement encoding is
+    ///      incompatible with their own before any facts can be registered.
+    function publicValuesLength() external view returns (uint512);
+
     function verify(bytes calldata proof, bytes calldata publicValues) external view returns (bool);
 }

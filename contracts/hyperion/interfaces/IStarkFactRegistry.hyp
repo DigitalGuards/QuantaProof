@@ -6,6 +6,12 @@ pragma hyperion >=0.0;
 /// @dev A fact is keccak256(abi.encodePacked(verifier, programId, keccak256(publicValues)))
 ///      and is set once a proof for those public values has been verified.
 interface IStarkFactRegistry {
+    function verifierAddress() external view returns (address);
+
+    function programIdentifier() external view returns (bytes32);
+
+    function publicValuesLength() external view returns (uint512);
+
     function isValid(bytes32 fact) external view returns (bool);
 
     function registerFact(bytes calldata proof, bytes calldata publicValues) external returns (bytes32);
