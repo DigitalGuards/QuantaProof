@@ -1,0 +1,524 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+/// @title MerkleMultiProof
+/// @notice keccak256 Merkle leaf hashing and pruned multi-opening verification
+///         for the 512-bit QRVM: the byte-exact counterpart of Plonky3
+///         `MerkleTreeMmcs::verify_batch_pruned` over a binary tree with cap
+///         height 0 (docs/PROTOCOL.md section 9).
+/// @dev Wire order of the pruned proof (crates.io p3-merkle-tree 0.7.0-rc.1):
+///      `PrunedMerklePaths` (src/pruning.rs:83-89) is one flat digest list,
+///      level 0 first, within a level by ascending parent index, within a
+///      parent group the missing child positions ascending. `walk_frontier`
+///      (src/pruning.rs:130-176) defines that walk: the frontier starts at the
+///      sorted-unique leaves, every level groups adjacent nodes by parent
+///      (`index / 2`), visits the two child positions in order and emits a
+///      boundary digest for each position no frontier node occupies.
+///      `restore_paths` (src/pruning.rs:252-311) rejects a proof whose digest
+///      count differs from what the walk consumed (`SiblingCountMismatch`,
+///      lines 304-311) and `verify_batch_pruned` (src/mmcs/mod.rs:450-794)
+///      compares the duplicate openings before any hashing (lines 527-543,
+///      `InconsistentDuplicateOpenings`, our `DuplicateOpeningMismatch`), then
+///      recomputes every inner node (lines 648-712) and compares the single
+///      survivor with the cap (`MerkleRootMismatch`).
+///
+///      Conventions shared by every function:
+///      - a digest is the 256-bit keccak256 output right-aligned in a uint512
+///        (what assembly `keccak256` returns; high-level `bytes32` values are
+///        left-aligned and must be shifted by the caller);
+///      - a word array is `count` consecutive 64-byte memory words, one value
+///        per word, addressed by a memory pointer; indices are below 2^32
+///        (Goldilocks two-adicity) and query numbers below 2^64;
+///      - functions that return arrays allocate them through the free memory
+///        pointer at 0x80; sortKeys (merge buffer), verifyPruned (two node
+///        buffers) and expectedSiblingCount (index buffer) use the memory
+///        above the free memory pointer as temporary scratch without
+///        allocating it, which keeps the memory high-water mark flat across
+///        the blocks of one proof;
+///      - scratch 0x00..0x3f holds the two-child preimage of every
+///        compression, so nothing in that word survives a call;
+///      - no assembly block reverts; gather and collapseByShift raise
+///        DuplicateOpeningMismatch from Hyperion code, verifyPruned reports
+///        (ok, consumed) and verifyBlock turns them into the two remaining
+///        errors in the protocol order (sibling count before root).
+library MerkleMultiProof {
+    /// @notice Low 256 bits: the digest half of a packed node word.
+    uint512 internal constant MASK256 =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+    /// @notice High 256 bits: the index half of a packed node word, and the
+    ///         digest of a calldata sibling as `calldataload` delivers it.
+    uint512 internal constant HIGH256 =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000000000000000;
+    /// @notice Low 64 bits: the query number inside a sort key.
+    uint512 internal constant MASK64 = 0xFFFFFFFFFFFFFFFF;
+    /// @notice Bit 256: the parity of the index in a packed node word.
+    uint512 internal constant BIT256 =
+        0x10000000000000000000000000000000000000000000000000000000000000000;
+    /// @notice Array terminator: no index or key ever equals it, so a loop
+    ///         may peek one word past the last node without a bounds check.
+    uint512 internal constant SENTINEL =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+
+    /// @notice The proof carries a different number of sibling digests than
+    ///         the frontier walk over the query indices consumes.
+    error SiblingCountMismatch();
+    /// @notice The recomputed root differs from the committed one.
+    error MerkleRootMismatch();
+    /// @notice Two queries open the same leaf with different rows.
+    error DuplicateOpeningMismatch();
+
+    // ------------------------------------------------------------------
+    // Hashing
+    // ------------------------------------------------------------------
+
+    /// @notice keccak256 of `size` calldata bytes at absolute offset `off`.
+    /// @dev Rows travel in calldata exactly as Plonky3 hashes them (canonical
+    ///      little-endian u64 per element), so the bytes are hashed as they
+    ///      are. Copies through the memory at the free memory pointer without
+    ///      allocating it.
+    function leafOfCalldata(uint512 off, uint512 size) internal pure returns (uint512 digest) {
+        assembly {
+            let p := mload(0x80)
+            calldatacopy(p, off, size)
+            digest := keccak256(p, size)
+        }
+    }
+
+    /// @notice keccak256 of `size` memory bytes at `ptr`.
+    function leafOfMemory(uint512 ptr, uint512 size) internal pure returns (uint512 digest) {
+        assembly {
+            digest := keccak256(ptr, size)
+        }
+    }
+
+    /// @notice keccak256(left || right) for two right-aligned digests
+    ///         (p3-symmetric CompressionFunctionFromHasher, child order).
+    function compress(uint512 left, uint512 right) internal pure returns (uint512 digest) {
+        assembly {
+            mstore(0x00, or(shl(256, left), and(right, MASK256)))
+            digest := keccak256(0x00, 64)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Query index bookkeeping
+    // ------------------------------------------------------------------
+
+    /// @notice Sort `count` query indices into keys `(index << 64) | q`.
+    /// @dev Returns a freshly allocated word array of keys in ascending
+    ///      order: sorted by index, ties by query number, which is exactly the
+    ///      (sorted_unique, first representative) structure of rc.1
+    ///      mmcs/mod.rs:510-543 once equal indices are collapsed. The key
+    ///      order also survives every FRI round: shifting all indices right by
+    ///      the round arity keeps it sorted, so one sort per proof serves
+    ///      every block. Hybrid sort: insertion sort inside runs of eight
+    ///      keys, then bottom-up merges of the runs between two buffers (the
+    ///      second one is scratch above the free memory pointer). Measured on
+    ///      the dev node against plain insertion and plain merge sorts it is
+    ///      the cheapest of the three at every Q from 34 to 128 (28k gas at
+    ///      Q = 34, 88k at Q = 100, 115k at Q = 128). The keys are distinct,
+    ///      so the merge needs no tie rule.
+    function sortKeys(uint512 idxPtr, uint512 count) internal pure returns (uint512 keysPtr) {
+        assembly {
+            keysPtr := mload(0x80)
+            let size := shl(6, count)
+            mstore(0x80, add(keysPtr, size))
+            let src := keysPtr
+            let dst := add(keysPtr, size)
+            // Insertion sort inside runs of `run` bytes (eight keys).
+            let run := 512
+            for {
+                let lo := 0
+            } lt(lo, size) {
+                lo := add(lo, run)
+            } {
+                let base := add(src, lo)
+                let hi := add(lo, run)
+                if gt(hi, size) {
+                    hi := size
+                }
+                for {
+                    let q := shr(6, lo)
+                } lt(q, shr(6, hi)) {
+                    q := add(q, 1)
+                } {
+                    let key := or(shl(64, mload(add(idxPtr, shl(6, q)))), q)
+                    let p := add(src, shl(6, q))
+                    for {} gt(p, base) {} {
+                        let prev := mload(sub(p, 64))
+                        if lt(prev, key) {
+                            break
+                        }
+                        mstore(p, prev)
+                        p := sub(p, 64)
+                    }
+                    mstore(p, key)
+                }
+            }
+            // Merge passes: runs of `width` bytes into runs of twice that.
+            for {
+                let width := run
+            } lt(width, size) {
+                width := shl(1, width)
+            } {
+                for {
+                    let lo := 0
+                } lt(lo, size) {
+                    lo := add(lo, shl(1, width))
+                } {
+                    let mid := add(lo, width)
+                    if gt(mid, size) {
+                        mid := size
+                    }
+                    let hi := add(mid, width)
+                    if gt(hi, size) {
+                        hi := size
+                    }
+                    let i := add(src, lo)
+                    let iEnd := add(src, mid)
+                    let j := iEnd
+                    let jEnd := add(src, hi)
+                    let o := add(dst, lo)
+                    for {} and(lt(i, iEnd), lt(j, jEnd)) {
+                        o := add(o, 64)
+                    } {
+                        let ki := mload(i)
+                        let kj := mload(j)
+                        switch lt(kj, ki)
+                        case 1 {
+                            mstore(o, kj)
+                            j := add(j, 64)
+                        }
+                        default {
+                            mstore(o, ki)
+                            i := add(i, 64)
+                        }
+                    }
+                    for {} lt(i, iEnd) {
+                        i := add(i, 64)
+                        o := add(o, 64)
+                    } {
+                        mstore(o, mload(i))
+                    }
+                    for {} lt(j, jEnd) {
+                        j := add(j, 64)
+                        o := add(o, 64)
+                    } {
+                        mstore(o, mload(j))
+                    }
+                }
+                let t := src
+                src := dst
+                dst := t
+            }
+            if iszero(eq(src, keysPtr)) {
+                for {
+                    let p := 0
+                } lt(p, size) {
+                    p := add(p, 64)
+                } {
+                    mstore(add(keysPtr, p), mload(add(src, p)))
+                }
+            }
+        }
+    }
+
+    /// @notice Sorted unique query indices with one representative query per
+    ///         unique leaf (the first query, in query order, that opens it).
+    /// @return uniquePtr word array of `m` ascending distinct indices
+    /// @return repPtr word array of `m` query numbers
+    /// @return m number of unique leaves
+    function sortUnique(
+        uint512 idxPtr,
+        uint512 count
+    ) internal pure returns (uint512 uniquePtr, uint512 repPtr, uint512 m) {
+        uint512 keysPtr = sortKeys(idxPtr, count);
+        assembly {
+            uniquePtr := mload(0x80)
+            repPtr := add(uniquePtr, shl(6, count))
+            mstore(0x80, add(repPtr, shl(6, count)))
+            let last := SENTINEL
+            let end := add(keysPtr, shl(6, count))
+            for {
+                let p := keysPtr
+            } lt(p, end) {
+                p := add(p, 64)
+            } {
+                let key := mload(p)
+                let idx := shr(64, key)
+                if iszero(eq(idx, last)) {
+                    mstore(add(uniquePtr, shl(6, m)), idx)
+                    mstore(add(repPtr, shl(6, m)), and(key, MASK64))
+                    m := add(m, 1)
+                    last := idx
+                }
+            }
+        }
+    }
+
+    /// @notice Collapse per-query leaf digests onto the sorted unique leaves
+    ///         of one block, checking that duplicate openings agree.
+    /// @dev `keysPtr` comes from sortKeys, `qDigestPtr` holds one digest per
+    ///      query in query order, `shift` is the right shift that maps the
+    ///      sorted (height H) indices to this block's leaf indices (0 for the
+    ///      input batches, the cumulative log arity for a FRI round). Every
+    ///      query that lands on an already emitted leaf must carry the same
+    ///      digest as the first one, otherwise DuplicateOpeningMismatch. This
+    ///      mirrors rc.1's row equality check (mmcs/mod.rs:527-543) up to
+    ///      keccak collision resistance and covers every query of every
+    ///      block, including queries that already shared a leaf at height H.
+    /// @return uniquePtr word array of `m` ascending distinct leaf indices
+    /// @return digestPtr word array of `m` leaf digests
+    /// @return m number of unique leaves
+    function gather(
+        uint512 keysPtr,
+        uint512 qDigestPtr,
+        uint512 count,
+        uint512 shift
+    ) internal pure returns (uint512 uniquePtr, uint512 digestPtr, uint512 m) {
+        bool bad;
+        assembly {
+            uniquePtr := mload(0x80)
+            digestPtr := add(uniquePtr, shl(6, count))
+            mstore(0x80, add(digestPtr, shl(6, count)))
+            let last := SENTINEL
+            let end := add(keysPtr, shl(6, count))
+            for {
+                let p := keysPtr
+            } lt(p, end) {
+                p := add(p, 64)
+            } {
+                let key := mload(p)
+                let idx := shr(add(64, shift), key)
+                let d := mload(add(qDigestPtr, shl(6, and(key, MASK64))))
+                switch eq(idx, last)
+                case 1 {
+                    if iszero(eq(d, mload(sub(add(digestPtr, shl(6, m)), 64)))) {
+                        bad := 1
+                    }
+                }
+                default {
+                    mstore(add(uniquePtr, shl(6, m)), idx)
+                    mstore(add(digestPtr, shl(6, m)), d)
+                    m := add(m, 1)
+                    last := idx
+                }
+            }
+        }
+        if (bad) revert DuplicateOpeningMismatch();
+    }
+
+    /// @notice Shift the unique indices of one block right by `k` (the log
+    ///         arity of a FRI round) and merge the slots that coincide, in
+    ///         place, requiring the merged slots to carry identical digests.
+    /// @dev The unique-slot form of gather for callers that keep one digest
+    ///      per unique leaf across rounds; two merging slots that disagree
+    ///      raise DuplicateOpeningMismatch.
+    /// @return m2 number of unique leaves after the shift
+    function collapseByShift(
+        uint512 uniqueIdxPtr,
+        uint512 digestPtr,
+        uint512 m,
+        uint512 k
+    ) internal pure returns (uint512 m2) {
+        bool bad;
+        assembly {
+            let last := SENTINEL
+            for {
+                let s := 0
+            } lt(s, m) {
+                s := add(s, 1)
+            } {
+                let idx := shr(k, mload(add(uniqueIdxPtr, shl(6, s))))
+                let d := mload(add(digestPtr, shl(6, s)))
+                switch eq(idx, last)
+                case 1 {
+                    if iszero(eq(d, mload(sub(add(digestPtr, shl(6, m2)), 64)))) {
+                        bad := 1
+                    }
+                }
+                default {
+                    mstore(add(uniqueIdxPtr, shl(6, m2)), idx)
+                    mstore(add(digestPtr, shl(6, m2)), d)
+                    m2 := add(m2, 1)
+                    last := idx
+                }
+            }
+        }
+        if (bad) revert DuplicateOpeningMismatch();
+    }
+
+    /// @notice Number of sibling digests the frontier walk consumes for `m`
+    ///         sorted unique leaves in a tree of the given height, without
+    ///         hashing (rc.1 restore_paths counts the same walk).
+    function expectedSiblingCount(
+        uint512 uniqueIdxPtr,
+        uint512 m,
+        uint512 height
+    ) internal pure returns (uint512 count) {
+        assembly {
+            // Working copy above the free memory pointer, collapsed in place:
+            // the write cursor never overtakes the read cursor.
+            let a := mload(0x80)
+            let n := m
+            for {
+                let i := 0
+            } lt(i, n) {
+                i := add(i, 1)
+            } {
+                mstore(add(a, shl(6, i)), mload(add(uniqueIdxPtr, shl(6, i))))
+            }
+            for {
+                let level := 0
+            } lt(level, height) {
+                level := add(level, 1)
+            } {
+                let end := add(a, shl(6, n))
+                mstore(end, SENTINEL)
+                let dst := a
+                for {
+                    let src := a
+                } lt(src, end) {} {
+                    let idx := mload(src)
+                    src := add(src, 64)
+                    let paired := 0
+                    if iszero(and(idx, 1)) {
+                        paired := eq(mload(src), add(idx, 1))
+                    }
+                    src := add(src, shl(6, paired))
+                    count := add(count, iszero(paired))
+                    mstore(dst, shr(1, idx))
+                    dst := add(dst, 64)
+                }
+                n := shr(6, sub(dst, a))
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Frontier walk
+    // ------------------------------------------------------------------
+
+    /// @notice Recompute the root of a pruned multi-opening from `m` sorted
+    ///         unique (index, digest) leaves and the flat sibling list at
+    ///         calldata offset `cdOff`.
+    /// @dev The walk of rc.1 walk_frontier / verify_batch_pruned for a binary
+    ///      tree: per level, two adjacent frontier nodes with a common parent
+    ///      compress together; any other node takes the next calldata sibling
+    ///      on the side its index parity leaves open (even index: sibling on
+    ///      the right, odd: on the left). Nodes live as packed words
+    ///      `(index << 256) | digest` in two scratch buffers of `m + 1` words
+    ///      above the free memory pointer, swapped every level; the extra
+    ///      word holds a sentinel so the pair test needs no bounds check.
+    ///      Siblings are read with `calldataload` (a 32-byte digest is the
+    ///      high half of the 64-byte word) and are never bounds-checked here:
+    ///      calldata past the end reads as zero, and the caller compares
+    ///      `consumed` with the block's `sib_count` before it trusts `ok`.
+    ///      All indices must be below 2^height, which the transcript
+    ///      guarantees (`sample_bits(H)` and right shifts); otherwise the walk
+    ///      ends with more than one node and `ok` is false.
+    /// @param root right-aligned expected root digest
+    /// @param height tree height (log2 of the leaf count)
+    /// @param uniqueIdxPtr word array of `m` ascending distinct leaf indices
+    /// @param digestPtr word array of `m` leaf digests, same order
+    /// @param m number of unique leaves (at least 1)
+    /// @param cdOff absolute calldata offset of the first sibling digest
+    /// @return ok the walk ended in exactly one node equal to `root`
+    /// @return consumed number of 32-byte siblings the walk read
+    function verifyPruned(
+        uint512 root,
+        uint512 height,
+        uint512 uniqueIdxPtr,
+        uint512 digestPtr,
+        uint512 m,
+        uint512 cdOff
+    ) internal pure returns (bool ok, uint512 consumed) {
+        assembly {
+            let cd := cdOff
+            let a := mload(0x80)
+            let b := add(a, shl(6, add(m, 1)))
+            // Level 0: pack the caller's two arrays into node words.
+            for {
+                let i := 0
+            } lt(i, m) {
+                i := add(i, 1)
+            } {
+                mstore(
+                    add(a, shl(6, i)),
+                    or(
+                        shl(256, mload(add(uniqueIdxPtr, shl(6, i)))),
+                        and(mload(add(digestPtr, shl(6, i))), MASK256)
+                    )
+                )
+            }
+            let count := m
+            for {
+                let level := 0
+            } lt(level, height) {
+                level := add(level, 1)
+            } {
+                let end := add(a, shl(6, count))
+                mstore(end, SENTINEL)
+                let src := a
+                let dst := b
+                for {} lt(src, end) {
+                    dst := add(dst, 64)
+                } {
+                    let w := mload(src)
+                    switch and(w, BIT256)
+                    case 0 {
+                        // Even index: the sibling sits on the right, either the
+                        // next frontier node (index + 1, same parent) or a
+                        // calldata digest.
+                        let wn := mload(add(src, 64))
+                        switch eq(shr(257, wn), shr(257, w))
+                        case 1 {
+                            mstore(0x00, or(shl(256, w), and(wn, MASK256)))
+                            src := add(src, 128)
+                        }
+                        default {
+                            mstore(0x00, or(shl(256, w), shr(256, calldataload(cd))))
+                            cd := add(cd, 32)
+                            src := add(src, 64)
+                        }
+                    }
+                    default {
+                        // Odd index: the left child is always a calldata digest,
+                        // its even twin would have been visited first otherwise.
+                        mstore(0x00, or(and(calldataload(cd), HIGH256), and(w, MASK256)))
+                        cd := add(cd, 32)
+                        src := add(src, 64)
+                    }
+                    // Parent: index >> 1 in the high half, digest below.
+                    mstore(dst, or(and(shr(1, w), HIGH256), keccak256(0x00, 64)))
+                }
+                count := shr(6, sub(dst, b))
+                let t := a
+                a := b
+                b := t
+            }
+            ok := and(eq(count, 1), eq(and(mload(a), MASK256), and(root, MASK256)))
+            consumed := shr(5, sub(cd, cdOff))
+        }
+    }
+
+    /// @notice verifyPruned with the protocol's error precedence: the number
+    ///         of consumed siblings must equal the block's `sib_count` field
+    ///         (SiblingCountMismatch, rc.1 checks it before hashing) and the
+    ///         walk must end at `root` (MerkleRootMismatch).
+    /// @return consumed number of siblings the walk read (equals sibCount)
+    function verifyBlock(
+        uint512 root,
+        uint512 height,
+        uint512 uniqueIdxPtr,
+        uint512 digestPtr,
+        uint512 m,
+        uint512 cdOff,
+        uint512 sibCount
+    ) internal pure returns (uint512 consumed) {
+        bool ok;
+        (ok, consumed) = verifyPruned(root, height, uniqueIdxPtr, digestPtr, m, cdOff);
+        if (consumed != sibCount) revert SiblingCountMismatch();
+        if (!ok) revert MerkleRootMismatch();
+    }
+}

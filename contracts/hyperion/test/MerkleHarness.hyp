@@ -1,0 +1,405 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "../lib/MerkleMultiProof.hyp";
+
+/// @title MerkleHarness
+/// @notice External wrappers around MerkleMultiProof so the contract test
+///         suite can replay every Merkle block of every vector, drive the
+///         mutation vectors through the same error path the verifier uses,
+///         and measure the walk in isolation.
+/// @dev Test-only. ABI arrays arrive as 64-byte slots (uint64 right-aligned,
+///      bytes32 left-aligned) and are converted to the library's word arrays
+///      (right-aligned digests) before any library call; the gas wrappers
+///      measure only the library call, after that conversion. Array indices
+///      in the copy loops are uint256 because Hyperion array indices are
+///      uint256 typed.
+contract MerkleHarness {
+    // ------------------------------------------------------------------
+    // Conversions
+    // ------------------------------------------------------------------
+
+    function toBytes32(uint512 digest) internal pure returns (bytes32 out) {
+        assembly {
+            out := shl(256, digest)
+        }
+    }
+
+    function fromBytes32(bytes32 digest) internal pure returns (uint512 out) {
+        assembly {
+            out := shr(256, digest)
+        }
+    }
+
+    /// @dev Copy a uint64[] calldata array into a freshly allocated word array.
+    function indexWords(uint64[] calldata idx) internal pure returns (uint512 ptr) {
+        assembly {
+            ptr := mload(0x80)
+            let size := shl(6, idx.length)
+            mstore(0x80, add(ptr, size))
+            calldatacopy(ptr, idx.offset, size)
+        }
+    }
+
+    /// @dev Copy a bytes32[] calldata array into a word array of right-aligned digests.
+    function digestWords(bytes32[] calldata digests) internal pure returns (uint512 ptr) {
+        assembly {
+            ptr := mload(0x80)
+            let n := digests.length
+            mstore(0x80, add(ptr, shl(6, n)))
+            for {
+                let i := 0
+            } lt(i, n) {
+                i := add(i, 1)
+            } {
+                mstore(add(ptr, shl(6, i)), shr(256, calldataload(add(digests.offset, shl(6, i)))))
+            }
+        }
+    }
+
+    function indexArray(uint512 ptr, uint512 m) internal pure returns (uint64[] memory out) {
+        out = new uint64[](uint256(m));
+        for (uint256 i = 0; i < m; i++) {
+            uint512 v;
+            assembly {
+                v := mload(add(ptr, shl(6, i)))
+            }
+            out[i] = uint64(v);
+        }
+    }
+
+    function digestArray(uint512 ptr, uint512 m) internal pure returns (bytes32[] memory out) {
+        out = new bytes32[](uint256(m));
+        for (uint256 i = 0; i < m; i++) {
+            uint512 v;
+            assembly {
+                v := mload(add(ptr, shl(6, i)))
+            }
+            out[i] = toBytes32(v);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Hashing
+    // ------------------------------------------------------------------
+
+    /// @notice keccak256 of one row straight from calldata.
+    function leaf(bytes calldata row) external pure returns (bytes32) {
+        uint512 off;
+        assembly {
+            off := row.offset
+        }
+        return toBytes32(MerkleMultiProof.leafOfCalldata(off, row.length));
+    }
+
+    /// @notice keccak256 of the same row after a copy to memory.
+    function leafMemory(bytes calldata row) external pure returns (bytes32) {
+        bytes memory copy = row;
+        uint512 ptr;
+        assembly {
+            ptr := add(copy, 64)
+        }
+        return toBytes32(MerkleMultiProof.leafOfMemory(ptr, copy.length));
+    }
+
+    /// @notice keccak256 of every consecutive `rowSize`-byte row of `rows`.
+    function leaves(
+        bytes calldata rows,
+        uint512 rowSize
+    ) external pure returns (bytes32[] memory out) {
+        uint512 count = rows.length / rowSize;
+        uint512 base;
+        assembly {
+            base := rows.offset
+        }
+        out = new bytes32[](uint256(count));
+        for (uint256 i = 0; i < count; i++) {
+            out[i] = toBytes32(MerkleMultiProof.leafOfCalldata(base + rowSize * i, rowSize));
+        }
+    }
+
+    function compress(bytes32 left, bytes32 right) external pure returns (bytes32) {
+        return toBytes32(MerkleMultiProof.compress(fromBytes32(left), fromBytes32(right)));
+    }
+
+    // ------------------------------------------------------------------
+    // Index bookkeeping
+    // ------------------------------------------------------------------
+
+    /// @notice Query numbers in ascending (index, query) order.
+    function sortOrder(uint64[] calldata idx) external pure returns (uint64[] memory order) {
+        uint512 keys = MerkleMultiProof.sortKeys(indexWords(idx), idx.length);
+        order = new uint64[](idx.length);
+        for (uint256 i = 0; i < idx.length; i++) {
+            uint512 key;
+            assembly {
+                key := mload(add(keys, shl(6, i)))
+            }
+            order[i] = uint64(key & MerkleMultiProof.MASK64);
+        }
+    }
+
+    function sortUnique(
+        uint64[] calldata idx
+    ) external pure returns (uint64[] memory unique, uint64[] memory rep) {
+        (uint512 uniquePtr, uint512 repPtr, uint512 m) = MerkleMultiProof.sortUnique(
+            indexWords(idx),
+            idx.length
+        );
+        unique = indexArray(uniquePtr, m);
+        rep = indexArray(repPtr, m);
+    }
+
+    /// @notice gather over per-query digests; reverts DuplicateOpeningMismatch.
+    function gather(
+        uint64[] calldata idx,
+        bytes32[] calldata digests,
+        uint512 shift
+    ) external pure returns (uint64[] memory unique, bytes32[] memory out) {
+        uint512 keys = MerkleMultiProof.sortKeys(indexWords(idx), idx.length);
+        (uint512 uniquePtr, uint512 digestPtr, uint512 m) = MerkleMultiProof.gather(
+            keys,
+            digestWords(digests),
+            idx.length,
+            shift
+        );
+        unique = indexArray(uniquePtr, m);
+        out = digestArray(digestPtr, m);
+    }
+
+    /// @notice collapseByShift on copies of the arrays; reverts DuplicateOpeningMismatch.
+    function collapseByShift(
+        uint64[] calldata uniqueIdx,
+        bytes32[] calldata digests,
+        uint512 k
+    ) external pure returns (uint64[] memory unique, bytes32[] memory out) {
+        uint512 idxPtr = indexWords(uniqueIdx);
+        uint512 digestPtr = digestWords(digests);
+        uint512 m2 = MerkleMultiProof.collapseByShift(idxPtr, digestPtr, uniqueIdx.length, k);
+        unique = indexArray(idxPtr, m2);
+        out = digestArray(digestPtr, m2);
+    }
+
+    function expectedSiblingCount(
+        uint8 height,
+        uint64[] calldata uniqueIdx
+    ) external pure returns (uint512) {
+        return MerkleMultiProof.expectedSiblingCount(indexWords(uniqueIdx), uniqueIdx.length, height);
+    }
+
+    // ------------------------------------------------------------------
+    // Frontier walk
+    // ------------------------------------------------------------------
+
+    /// @notice The raw walk: (ok, consumed) without any revert.
+    function verifyPruned(
+        bytes32 root,
+        uint8 height,
+        uint64[] calldata uniqueIdx,
+        bytes32[] calldata leafDigests,
+        bytes calldata siblings
+    ) external pure returns (bool ok, uint512 consumed) {
+        uint512 idxPtr = indexWords(uniqueIdx);
+        uint512 digestPtr = digestWords(leafDigests);
+        uint512 cdOff;
+        assembly {
+            cdOff := siblings.offset
+        }
+        (ok, consumed) = MerkleMultiProof.verifyPruned(
+            fromBytes32(root),
+            height,
+            idxPtr,
+            digestPtr,
+            uniqueIdx.length,
+            cdOff
+        );
+    }
+
+    /// @notice The walk under gasleft(): conversion excluded, library call only.
+    /// @dev The scalar parameters are copied into locals before the arrays are
+    ///      converted so that every value the timed call needs sits near the
+    ///      top of the stack (eight calldata slots plus three returns leave no
+    ///      room for the legacy codegen to reach the first parameters late).
+    function gasVerifyPruned(
+        bytes32 root,
+        uint8 height,
+        uint64[] calldata uniqueIdx,
+        bytes32[] calldata leafDigests,
+        bytes calldata siblings
+    ) external view returns (bool ok, uint512 consumed, uint512 gasUsed) {
+        uint512 rootDigest = fromBytes32(root);
+        uint512 h = height;
+        uint512 idxPtr = indexWords(uniqueIdx);
+        uint512 digestPtr = digestWords(leafDigests);
+        uint512 m = uniqueIdx.length;
+        uint512 cdOff;
+        assembly {
+            cdOff := siblings.offset
+        }
+        (ok, consumed, gasUsed) = timedWalk(rootDigest, h, idxPtr, digestPtr, m, cdOff);
+    }
+
+    function timedWalk(
+        uint512 rootDigest,
+        uint512 height,
+        uint512 idxPtr,
+        uint512 digestPtr,
+        uint512 m,
+        uint512 cdOff
+    ) internal view returns (bool ok, uint512 consumed, uint512 gasUsed) {
+        uint512 before = gasleft();
+        (ok, consumed) = MerkleMultiProof.verifyPruned(
+            rootDigest,
+            height,
+            idxPtr,
+            digestPtr,
+            m,
+            cdOff
+        );
+        gasUsed = before - gasleft();
+    }
+
+    // ------------------------------------------------------------------
+    // Whole input block from proof calldata
+    // ------------------------------------------------------------------
+
+    /// @dev The verifier's pipeline for one input batch: sort the query
+    ///      indices, hash every row from calldata, gather onto the unique
+    ///      leaves (duplicate check), walk. Returns the walk result without
+    ///      reverting; the public wrappers add the errors or the gas figure.
+    function blockFromCalldata(
+        uint512 rowsBase,
+        uint512 rowSize,
+        uint64[] calldata indices,
+        uint512 rootDigest,
+        uint8 height,
+        uint512 siblingsBase
+    ) internal pure returns (bool ok, uint512 consumed) {
+        uint512 q = indices.length;
+        uint512 keys = MerkleMultiProof.sortKeys(indexWords(indices), q);
+        uint512 qDigestPtr;
+        assembly {
+            qDigestPtr := mload(0x80)
+            mstore(0x80, add(qDigestPtr, shl(6, q)))
+        }
+        for (uint512 i = 0; i < q; i++) {
+            uint512 d = MerkleMultiProof.leafOfCalldata(rowsBase + rowSize * i, rowSize);
+            assembly {
+                mstore(add(qDigestPtr, shl(6, i)), d)
+            }
+        }
+        (uint512 uniquePtr, uint512 digestPtr, uint512 m) = MerkleMultiProof.gather(
+            keys,
+            qDigestPtr,
+            q,
+            0
+        );
+        (ok, consumed) = MerkleMultiProof.verifyPruned(
+            rootDigest,
+            height,
+            uniquePtr,
+            digestPtr,
+            m,
+            siblingsBase
+        );
+    }
+
+    /// @notice Verify one input block (trace or quotient) of `proof` in place:
+    ///         rows at `rowsOffset` (`rowSize` bytes each, one per query),
+    ///         siblings at `siblingsOffset`, `sibCount` from the layout.
+    ///         Reverts DuplicateOpeningMismatch, SiblingCountMismatch or
+    ///         MerkleRootMismatch exactly like the verifier.
+    function verifyBlockFromCalldata(
+        bytes calldata proof,
+        uint512 rowsOffset,
+        uint512 rowSize,
+        uint64[] calldata indices,
+        bytes32 root,
+        uint8 height,
+        uint512 siblingsOffset,
+        uint512 sibCount
+    ) external pure returns (uint512 consumed) {
+        uint512 rowsBase;
+        uint512 siblingsBase;
+        assembly {
+            rowsBase := add(proof.offset, rowsOffset)
+            siblingsBase := add(proof.offset, siblingsOffset)
+        }
+        bool ok;
+        (ok, consumed) = blockFromCalldata(
+            rowsBase,
+            rowSize,
+            indices,
+            fromBytes32(root),
+            height,
+            siblingsBase
+        );
+        if (consumed != sibCount) revert MerkleMultiProof.SiblingCountMismatch();
+        if (!ok) revert MerkleMultiProof.MerkleRootMismatch();
+    }
+
+    /// @notice Per-stage cost of the input-block pipeline before the walk:
+    ///         sortKeys, the Q row hashes, gather.
+    function gasStages(
+        bytes calldata proof,
+        uint512 rowsOffset,
+        uint512 rowSize,
+        uint64[] calldata indices
+    ) external view returns (uint512 gasSort, uint512 gasHash, uint512 gasGather) {
+        uint512 q = indices.length;
+        uint512 idxPtr = indexWords(indices);
+        uint512 rowsBase;
+        assembly {
+            rowsBase := add(proof.offset, rowsOffset)
+        }
+        uint512 before = gasleft();
+        uint512 keys = MerkleMultiProof.sortKeys(idxPtr, q);
+        gasSort = before - gasleft();
+        uint512 qDigestPtr;
+        assembly {
+            qDigestPtr := mload(0x80)
+            mstore(0x80, add(qDigestPtr, shl(6, q)))
+        }
+        before = gasleft();
+        for (uint512 i = 0; i < q; i++) {
+            uint512 d = MerkleMultiProof.leafOfCalldata(rowsBase + rowSize * i, rowSize);
+            assembly {
+                mstore(add(qDigestPtr, shl(6, i)), d)
+            }
+        }
+        gasHash = before - gasleft();
+        before = gasleft();
+        MerkleMultiProof.gather(keys, qDigestPtr, q, 0);
+        gasGather = before - gasleft();
+    }
+
+    /// @notice The same pipeline under gasleft(): sort + Q row hashes +
+    ///         gather + walk, without the reverts.
+    function gasVerifyBlock(
+        bytes calldata proof,
+        uint512 rowsOffset,
+        uint512 rowSize,
+        uint64[] calldata indices,
+        bytes32 root,
+        uint8 height,
+        uint512 siblingsOffset
+    ) external view returns (bool ok, uint512 consumed, uint512 gasUsed) {
+        uint512 rowsBase;
+        uint512 siblingsBase;
+        assembly {
+            rowsBase := add(proof.offset, rowsOffset)
+            siblingsBase := add(proof.offset, siblingsOffset)
+        }
+        uint512 rootDigest = fromBytes32(root);
+        uint512 before = gasleft();
+        (ok, consumed) = blockFromCalldata(
+            rowsBase,
+            rowSize,
+            indices,
+            rootDigest,
+            height,
+            siblingsBase
+        );
+        gasUsed = before - gasleft();
+    }
+}
