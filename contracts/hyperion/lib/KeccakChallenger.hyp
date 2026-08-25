@@ -55,6 +55,7 @@ library KeccakChallenger {
 
     /// @notice An observe would grow the pending input past BUF_CAPACITY.
     error ChallengerOverflow();
+    error SampleBitsOutOfRange();
 
     // ------------------------------------------------------------------
     // Initialisation
@@ -138,6 +139,9 @@ library KeccakChallenger {
 
     /// @notice Append the 32 bytes of a digest given right-aligned in `d`
     ///         (the form assembly `keccak256` returns).
+    /// @dev A Hyperion `bytes32` is left-aligned in the word: pass
+    ///      `uint512(b) >> 256`, or observe roots straight from calldata
+    ///      with `observeCalldata(off, 32)`. Bits above 256 are dropped.
     function observeDigest(State memory s, uint512 d) internal pure {
         bool overflow;
         assembly ("memory-safe") {
@@ -215,7 +219,9 @@ library KeccakChallenger {
     }
 
     /// @notice The low `bits` bits of one full u64 group (bits < 64, never rejects).
+    /// @dev Plonky3 asserts `2^bits < p`; `bits >= 64` is rejected here.
     function sampleBits(State memory s, uint512 bits) internal pure returns (uint512 v) {
+        if (bits >= 64) revert SampleBitsOutOfRange();
         v = nextU64(s);
         assembly ("memory-safe") {
             v := and(v, sub(shl(bits, 1), 1))

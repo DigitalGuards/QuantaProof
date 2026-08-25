@@ -714,6 +714,9 @@ test('KeccakChallenger harness', { skip, timeout: 900000 }, async (t) => {
       s.sampleExt('ext', group(d2, 0), group(d2, 1));
       s.sampleField('field', group(d2, 2));
       await check(s, 'bits');
+      // Plonky3 asserts 2^bits < p; the library rejects bits >= 64.
+      const wide = new Script().observeBytes(bytes).sampleBits('64 bits', 64, 0n);
+      await expectRevert(h, 'replay(bytes)', [wide.bytes()], 'SampleBitsOutOfRange()');
     }
   );
 

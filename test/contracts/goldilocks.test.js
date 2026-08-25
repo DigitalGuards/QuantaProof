@@ -115,6 +115,8 @@ test('Goldilocks harness', { skip, timeout: 1200000 }, async (t) => {
     assert.equal(await h.callOne('inv(uint512)', [1n], 'uint512'), 1n);
     assert.equal(await h.callOne('inv(uint512)', [G.P - 1n], 'uint512'), G.P - 1n);
     await H.expectRevert(h, 'inv(uint512)', [0n], 'ZeroInverse()');
+    await H.expectRevert(h, 'inv(uint512)', [G.P], 'NonCanonicalElement()');
+    await H.expectRevert(h, 'inv(uint512)', [G.P + 5n], 'NonCanonicalElement()');
     assert.equal(await h.callOne('isCanonical(uint512)', [G.P - 1n], 'bool'), true);
     assert.equal(await h.callOne('isCanonical(uint512)', [G.P], 'bool'), false);
     assert.equal(await h.callOne('isCanonical(uint512)', [G.MASK64], 'bool'), false);
@@ -258,7 +260,8 @@ test('Goldilocks harness', { skip, timeout: 1200000 }, async (t) => {
     );
     // Bits above the width are ignored, as in the reference.
     assert.equal(await h.callOne('rev(uint512,uint512)', [0b1101n, 2n], 'uint512'), 0b10n);
-    await H.expectRevert(h, 'rev(uint512,uint512)', [1n, 0n], 'BitWidthOutOfRange()');
+    // bits == 0 returns 0, as Plonky3 reverse_bits_len(x, 0) does.
+    assert.equal(await h.callOne('rev(uint512,uint512)', [1n, 0n], 'uint512'), 0n);
     await H.expectRevert(h, 'rev(uint512,uint512)', [1n, 33n], 'BitWidthOutOfRange()');
   });
 

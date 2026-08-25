@@ -124,7 +124,7 @@ function packTableWords(table) {
 
 // Reverse the low `bits` bits of x (1 <= bits <= 32), Plonky3 reverse_bits_len.
 function rev(x, bits) {
-  if (!Number.isInteger(bits) || bits < 1 || bits > 32) {
+  if (!Number.isInteger(bits) || bits < 0 || bits > 32) {
     throw new RangeError(`bit count out of range: ${bits}`);
   }
   let v = BigInt(x) & ((1n << BigInt(bits)) - 1n);

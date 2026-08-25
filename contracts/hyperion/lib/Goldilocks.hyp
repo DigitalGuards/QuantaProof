@@ -164,6 +164,7 @@ library Goldilocks {
     ///      returns a different length (a chain without the precompile).
     function inv(uint512 x) internal view returns (uint512 r) {
         if (x == 0) revert ZeroInverse();
+        if (x >= P) revert NonCanonicalElement();
         bool ok;
         assembly {
             mstore(0x00, or(shl(256, 8), 8))
@@ -294,11 +295,11 @@ library Goldilocks {
     // ------------------------------------------------------------------
 
     /// @notice Reverse the low `bits` bits of x (1 <= bits <= 32); bits of x
-    ///         above that width are ignored. Plonky3 reverse_bits_len.
+    ///         above that width are ignored. Plonky3 reverse_bits_len; `bits == 0` returns 0.
     /// @dev Full 32-bit reversal by five mask-and-shift stages, then a right
     ///      shift by 32 - bits, so the cost is independent of `bits`.
     function rev(uint512 x, uint512 bits) internal pure returns (uint512 r) {
-        if (bits == 0 || bits > 32) revert BitWidthOutOfRange();
+        if (bits > 32) revert BitWidthOutOfRange();
         assembly {
             r := and(x, 0xFFFFFFFF)
             r := or(shl(1, and(r, 0x55555555)), and(shr(1, r), 0x55555555))

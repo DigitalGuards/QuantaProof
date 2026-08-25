@@ -221,7 +221,7 @@ test('rev reverses the low bits and is an involution', () => {
       assert.ok(G.rev(x, bits) < 1n << BigInt(bits));
     }
   }
-  assert.throws(() => G.rev(1n, 0), /out of range/);
+  assert.equal(G.rev(1n, 0), 0n);
   assert.throws(() => G.rev(1n, 33), /out of range/);
 });
 
