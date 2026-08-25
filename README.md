@@ -6,7 +6,7 @@ QuantaProof is a Hyperion-native verifier for Plonky3-compatible STARK proofs on
 
 QRL 2.0 has no pairing precompiles, so pairing-based SNARK verifiers cannot run there. Validity proofs on QRL take the hash-and-field-arithmetic shape of a STARK, which is post-quantum by construction. The QRVM word is 512 bits, `address` is 64 bytes and every ABI slot is 64 bytes, so existing Solidity verifiers serve as reference material only.
 
-Status: the verifier, the prover, the vectors, the fact registry and the bridge skeleton are complete and measured on the gqrl developer node (milestones M0 to M8 of [`docs/DECISIONS.md`](docs/DECISIONS.md)); the Kurtosis release gate waits for its image build and the L2 architecture document is derived from the measured numbers. `StarkVerifier.verify` accepts every valid vector of the sixteen parameter presets and rejects every mutated vector with its recorded custom error. Headline numbers (developer node, optimizer runs 200, whole `verifyAndLog` transactions; [`docs/GAS-REPORT.md`](docs/GAS-REPORT.md) has every cell):
+Status: the verifier, the prover, the vectors, the fact registry and the bridge skeleton are complete and measured on the gqrl developer node (milestones M0 to M8 of [`docs/DECISIONS.md`](docs/DECISIONS.md)); the Kurtosis release gate has been run on chain 3151909 (all presets deployed, `fib_c3_n20` verified end to end, gas report; record in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md)) and the L2 architecture document is derived from the measured numbers. `StarkVerifier.verify` accepts every valid vector of the sixteen parameter presets and rejects every mutated vector with its recorded custom error. Headline numbers (developer node, optimizer runs 200, whole `verifyAndLog` transactions; [`docs/GAS-REPORT.md`](docs/GAS-REPORT.md) has every cell):
 
 | Cell                       | Proof bytes | Transaction gas | Inside the verifier |
 | -------------------------- | ----------: | --------------: | ------------------: |
@@ -78,7 +78,7 @@ Without `STARK_RPC_URL` the contract suites report themselves as skipped, which 
 
 ## Local QRL 2.0 network
 
-Two local networks exist. The gqrl developer node is the fast path for iteration and produced every number in the gas report: `npm run dev-node` starts it with chain id 1337, one unlocked pre-funded account and a 20,000,000 gas limit, sealing a block whenever a transaction is pending. Kurtosis is the release gate: a full execution, beacon and validator composition built from pinned sources, pending its image build on the workstation.
+Two local networks exist. The gqrl developer node is the fast path for iteration and produced every number in the gas report: `npm run dev-node` starts it with chain id 1337, one unlocked pre-funded account and a 20,000,000 gas limit, sealing a block whenever a transaction is pending. Kurtosis is the release gate: a full execution, beacon and validator composition built from pinned sources, validated on 2026-08-25 (see `docs/TOOLCHAIN.md`).
 
 ```bash
 npm run build:local-network    # qrl2-stark/go-qrl:stark and the pinned Qrysm images

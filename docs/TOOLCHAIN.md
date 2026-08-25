@@ -6,7 +6,7 @@ repository and its sibling checkouts (`go-qrl`, `hyperion`, `qrl-package`).
 
 Status (2026-08-25): the compiler and the execution client are built, the
 developer node is validated and carries every measurement in
-`docs/GAS-REPORT.md`; the Kurtosis composition is pending its image build.
+`docs/GAS-REPORT.md`; the Kurtosis composition has been validated (record in the release-gate section).
 
 ## Worktrees and snapshot commits
 
@@ -138,17 +138,21 @@ and through `STARK_CONFIG=config/dev-node.json` for `npm run deploy`,
 `npm run verify:proof` and `npm run gas:report`. Kurtosis remains the
 authoritative gate; the developer node has no beacon and no second client.
 
-## Release gate: the Kurtosis composition (pending the image build)
+## Release gate: the Kurtosis composition (validated 2026-08-25)
 
-Status: the composition is prepared but has not been exercised on this
-workstation yet. Neither the execution image nor the Qrysm images have been
-built (the Docker daemon is normally stopped and the builds compete with other
-work on the machine), so no enclave has run and no number in
-`docs/GAS-REPORT.md` comes from it. The procedure below is the QNS-validated
-one carried over with the port, chain-id and image-namespace changes; running
-it end to end (build, start, deploy, verify, report) is the remaining step of
-milestone M7. The execution client in the image is the same source as the
-developer node, so the transaction-pool size cap applies there as well.
+Status: exercised end to end on the workstation on 2026-08-25. Validation record:
+
+- Sources: `go-qrl-stark` b19c839 (clean), `hyperion-stark` cf176678, `qrl-package` 04fd313; `hypc 0.2.0-develop.2026.8.25+commit.cf176678`; Plonky3 0.7.0-rc.1.
+- Images: `qrl2-stark/go-qrl:stark` 35f343ac214c (label `revision=b19c839…`, `source-state=clean`), `qrl2-stark/qrysm:beacon-chain-64` 2291f5a9bd5e and `validator-64` 0f80b9cd042b (re-tagged from the QNS builds of `cyyber/qrysm@b53fd7c4`), `qrl2-stark/qrysm:qrl-genesis-generator-64` 14bab0a0877c (same source build of `qrl-genesis-generator@6a11fbce`, relabelled with its revision so the start script accepts it).
+- Enclave `qrl2-stark` on chain 3151909 next to the running `qrl2-qns` enclave; `qrl_chainId` 0x301825, blocks advancing every slot, latest block `gasLimit` 0x1312d00 (20,000,000).
+- `STARK_ALLOW_WILDCARD_BIND=1` was required: the Kurtosis port publisher binds the execution ports with an explicit `0.0.0.0` host address, which the loopback daemon default cannot override (see "Docker loopback binding" below). The workstation runs WSL2 in NAT mode, so those ports are reachable from the Windows host only.
+- `npm run deploy -- --preset all` with `STARK_DEPLOY_BRIDGE=1` from fixture account 0: 16 verifiers, 16 gas meters, the fact registry and the bridge, recorded in `config/local-stark.json`.
+- `npm run verify:proof -- --vector test/vectors/large/fib_c3_n20.json`: transaction `0xc61cfadf…` in block 74, status 1, `verifyAndLog` gasUsed 4,500,257 (the developer-node figure 4,463,257 plus the meter's one-time storage warm-up), inner gas 2,710,754, identical to the developer node.
+- Gas report: `npm run gas:report -- --store build/gas-report-kurtosis` re-measured all 44 cells on chain 3151909 at optimizer runs 200; proof bytes, calldata gas, `estimateGas`, `gasUsed` and inner gas are identical to the developer-node cells in `docs/GAS-REPORT.md` for every vector, which keeps the three-setting developer-node render as the published report (the Kurtosis store stays local under `build/gas-report-kurtosis/`).
+
+The execution client in the image is the same source as the developer node,
+so QRVM gas is identical and the transaction-pool size cap applies there as
+well.
 
 | Item              | Value                                                                                                                             |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -227,6 +231,18 @@ Confirm with `docker ps --format 'table {{.Names}}\t{{.Ports}}'` and `ss -ltnp`
 that every published address is `127.0.0.1`. The start script's probe automates
 the check but the URL in the deployment record is never evidence of the bind
 scope.
+
+Finding from the 2026-08-25 run: the daemon default does reach the enclave
+network (`docker network inspect kt-qrl2-stark` shows
+`host_binding_ipv4=127.0.0.1`), but the qrl-package port publisher asks Docker
+for explicit `0.0.0.0` host bindings on the execution ports (`HostIp` in the
+container's `PortBindings`), and an explicit address always wins over the
+network default. The start script's pre-start probe therefore passes while its
+post-start verification fails, and the enclave is stopped. On a host whose
+ingress is already controlled (this workstation: WSL2 in NAT mode, so the
+ports are reachable from the Windows host only) start with
+`STARK_ALLOW_WILDCARD_BIND=1`; on any other host, front the ports with a
+firewall rule before acknowledging.
 
 ## Deploy, verify, measure
 
