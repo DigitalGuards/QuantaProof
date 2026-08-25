@@ -1,0 +1,313 @@
+{
+  "description": "Goldilocks constants used by the QuantaProof verifier. Field elements travel as canonical 8-byte little-endian words; the QRVM word is 512 bits (8 lanes of 64 bits).",
+  "epsilon": {
+    "dec": "4294967295",
+    "hex": "0x00000000ffffffff"
+  },
+  "epsilonNote": "2^64 mod p = 2^32 - 1; used by the reduction x = lo + (2^32 - 1) * hi",
+  "field": "goldilocks",
+  "generator": {
+    "dec": "7",
+    "hex": "0x0000000000000007"
+  },
+  "generatorNote": "Multiplicative generator; every LDE lives on the coset 7 * K",
+  "inv2": {
+    "dec": "9223372034707292161",
+    "hex": "0x7fffffff80000001"
+  },
+  "laneMasks": {
+    "bswap16": "0x0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff",
+    "bswap32": "0x00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff",
+    "bswap8": "0x00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff",
+    "lane64": {
+      "dec": "18446744073709551615",
+      "hex": "0xffffffffffffffff"
+    },
+    "lanesPerWord": 8,
+    "note": "Per-lane byte swap of a 512-bit calldata word: x = ((x >> 8) & bswap8) | ((x & bswap8) << 8); x = ((x >> 16) & bswap16) | ((x & bswap16) << 16); x = ((x >> 32) & bswap32) | ((x & bswap32) << 32). After the swap lane k (from the most significant lane) holds element k as a big-endian u64."
+  },
+  "p": {
+    "dec": "18446744069414584321",
+    "hex": "0xffffffff00000001"
+  },
+  "pMinusOne": {
+    "dec": "18446744069414584320",
+    "hex": "0xffffffff00000000"
+  },
+  "plonky3Version": "0.7.0-rc.1",
+  "twoAdicGeneratorInverses": [
+    {
+      "dec": "1",
+      "hex": "0x0000000000000001"
+    },
+    {
+      "dec": "18446744069414584320",
+      "hex": "0xffffffff00000000"
+    },
+    {
+      "dec": "18446462594437873665",
+      "hex": "0xfffeffff00000001"
+    },
+    {
+      "dec": "1099511627520",
+      "hex": "0x000000ffffffff00"
+    },
+    {
+      "dec": "68719476736",
+      "hex": "0x0000001000000000"
+    },
+    {
+      "dec": "18446744069414322177",
+      "hex": "0xfffffffefffc0001"
+    },
+    {
+      "dec": "18302628881338728449",
+      "hex": "0xfdffffff00000001"
+    },
+    {
+      "dec": "18442240469787213841",
+      "hex": "0xffefffff00000011"
+    },
+    {
+      "dec": "2117504431143841456",
+      "hex": "0x1d62e30fa4a4eeb0"
+    },
+    {
+      "dec": "4459017075746761332",
+      "hex": "0x3de19c67cf496a74"
+    },
+    {
+      "dec": "4295002282146690441",
+      "hex": "0x3b9ae9d1d8d87589"
+    },
+    {
+      "dec": "8548973421900915981",
+      "hex": "0x76a40e0866a8e50d"
+    },
+    {
+      "dec": "11164456749895610016",
+      "hex": "0x9af01e431fbd6ea0"
+    },
+    {
+      "dec": "3968367389790187850",
+      "hex": "0x3712791d9eb0314a"
+    },
+    {
+      "dec": "4654242210262998966",
+      "hex": "0x409730a1895adfb6"
+    },
+    {
+      "dec": "1553425662128427817",
+      "hex": "0x158ee068c8241329"
+    },
+    {
+      "dec": "7868944258580147481",
+      "hex": "0x6d341b1c9a04ed19"
+    },
+    {
+      "dec": "14744321562856667967",
+      "hex": "0xcc9e5a57b8343b3f"
+    },
+    {
+      "dec": "2513567076326282710",
+      "hex": "0x22e1fbf03f8b95d6"
+    },
+    {
+      "dec": "5089696809409609209",
+      "hex": "0x46a23c48234c7df9"
+    },
+    {
+      "dec": "17260140776825220475",
+      "hex": "0xef8856969fe6ed7b"
+    },
+    {
+      "dec": "11898519751787946856",
+      "hex": "0xa52008ac564a2368"
+    },
+    {
+      "dec": "15307271466853436433",
+      "hex": "0xd46e5a4c36458c11"
+    },
+    {
+      "dec": "5456584715443070302",
+      "hex": "0x4bb9aee372cf655e"
+    },
+    {
+      "dec": "1219213613525454263",
+      "hex": "0x10eb845263814db7"
+    },
+    {
+      "dec": "13843946492009319323",
+      "hex": "0xc01f93fc71bb0b9b"
+    },
+    {
+      "dec": "16884827967813875098",
+      "hex": "0xea52f593bb20759a"
+    },
+    {
+      "dec": "10516896061424301529",
+      "hex": "0x91f3853f38e675d9"
+    },
+    {
+      "dec": "4514835231089717636",
+      "hex": "0x3ea7eab8d8857184"
+    },
+    {
+      "dec": "16488041148801377373",
+      "hex": "0xe4d14a114454645d"
+    },
+    {
+      "dec": "16303955383020744715",
+      "hex": "0xe2434909eec4f00b"
+    },
+    {
+      "dec": "10790884855407511297",
+      "hex": "0x95c0ec9a7ab50701"
+    },
+    {
+      "dec": "8554224884056360729",
+      "hex": "0x76b6b635b6fc8719"
+    }
+  ],
+  "twoAdicGenerators": [
+    {
+      "dec": "1",
+      "hex": "0x0000000000000001"
+    },
+    {
+      "dec": "18446744069414584320",
+      "hex": "0xffffffff00000000"
+    },
+    {
+      "dec": "281474976710656",
+      "hex": "0x0001000000000000"
+    },
+    {
+      "dec": "18446744069397807105",
+      "hex": "0xfffffffeff000001"
+    },
+    {
+      "dec": "17293822564807737345",
+      "hex": "0xefffffff00000001"
+    },
+    {
+      "dec": "70368744161280",
+      "hex": "0x00003fffffffc000"
+    },
+    {
+      "dec": "549755813888",
+      "hex": "0x0000008000000000"
+    },
+    {
+      "dec": "17870292113338400769",
+      "hex": "0xf80007ff08000001"
+    },
+    {
+      "dec": "13797081185216407910",
+      "hex": "0xbf79143ce60ca966"
+    },
+    {
+      "dec": "1803076106186727246",
+      "hex": "0x1905d02a5c411f4e"
+    },
+    {
+      "dec": "11353340290879379826",
+      "hex": "0x9d8f2ad78bfed972"
+    },
+    {
+      "dec": "455906449640507599",
+      "hex": "0x0653b4801da1c8cf"
+    },
+    {
+      "dec": "17492915097719143606",
+      "hex": "0xf2c35199959dfcb6"
+    },
+    {
+      "dec": "1532612707718625687",
+      "hex": "0x1544ef2335d17997"
+    },
+    {
+      "dec": "16207902636198568418",
+      "hex": "0xe0ee099310bba1e2"
+    },
+    {
+      "dec": "17776499369601055404",
+      "hex": "0xf6b2cffe2306baac"
+    },
+    {
+      "dec": "6115771955107415310",
+      "hex": "0x54df9630bf79450e"
+    },
+    {
+      "dec": "12380578893860276750",
+      "hex": "0xabd0a6e8aa3d8a0e"
+    },
+    {
+      "dec": "9306717745644682924",
+      "hex": "0x81281a7b05f9beac"
+    },
+    {
+      "dec": "18146160046829613826",
+      "hex": "0xfbd41c6b8caa3302"
+    },
+    {
+      "dec": "3511170319078647661",
+      "hex": "0x30ba2ecd5e93e76d"
+    },
+    {
+      "dec": "17654865857378133588",
+      "hex": "0xf502aef532322654"
+    },
+    {
+      "dec": "5416168637041100469",
+      "hex": "0x4b2a18ade67246b5"
+    },
+    {
+      "dec": "16905767614792059275",
+      "hex": "0xea9d5a1336fbc98b"
+    },
+    {
+      "dec": "9713644485405565297",
+      "hex": "0x86cdcc31c307e171"
+    },
+    {
+      "dec": "5456943929260765144",
+      "hex": "0x4bbaf5976ecfefd8"
+    },
+    {
+      "dec": "17096174751763063430",
+      "hex": "0xed41d05b78d6e286"
+    },
+    {
+      "dec": "1213594585890690845",
+      "hex": "0x10d78dd8915a171d"
+    },
+    {
+      "dec": "6414415596519834757",
+      "hex": "0x59049500004a4485"
+    },
+    {
+      "dec": "16116352524544190054",
+      "hex": "0xdfa8c93ba46d2666"
+    },
+    {
+      "dec": "9123114210336311365",
+      "hex": "0x7e9bd009b86a0845"
+    },
+    {
+      "dec": "4614640910117430873",
+      "hex": "0x400a7f755588e659"
+    },
+    {
+      "dec": "1753635133440165772",
+      "hex": "0x185629dcda58878c"
+    }
+  ],
+  "twoAdicGeneratorsNote": "TWO_ADIC_GENERATORS[i] has order 2^i; [i+1]^2 == [i]; index 0 is 1",
+  "twoAdicity": 32,
+  "w": {
+    "dec": "7",
+    "hex": "0x0000000000000007"
+  },
+  "wNote": "Challenge field is F[X] / (X^2 - 7)"
+}
