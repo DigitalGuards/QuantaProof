@@ -10,7 +10,7 @@
     />
     <meta
       name="keywords"
-      content="QuantaStark, STARK verifier, post-quantum, QRL 2.0, Quantum Resistant Ledger, Plonky3, Hyperion, QRVM, validity rollup, zero-knowledge proof, ML-DSA-87, Goldilocks, FRI"
+      content="QuantaStark, STARK verifier, post-quantum, QRL 2.0, Quantum Resistant Ledger, Plonky3, Hyperion, QRVM, validity rollup, transparent validity proof, scaling, ML-DSA-87, Goldilocks, FRI"
     />
     <meta name="robots" content="index, follow" />
     <meta name="author" content="DigitalGuards" />
@@ -609,8 +609,23 @@
               <tr>
                 <th scope="row">Soundness</th>
                 <td>
-                  116 to 118 conjectured bits per preset under the ethSTARK conjecture, about 66 to
-                  70 provable bits. The conjecture is under active revision.
+                  Every current preset is an experimental benchmark profile: 116 to 118 conjectured
+                  bits under the ethSTARK conjecture, with about 66 to 70 bits in the rough proven
+                  regime. A production profile remains open.
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">Privacy</th>
+                <td>
+                  The initial track is transparent validity and scaling. Proof layout version 1 does
+                  not provide zero knowledge.
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">Circuit hash</th>
+                <td>
+                  Selection is open. Poseidon2 remains an experimental benchmark candidate while M10
+                  reviews the exact parameters and keeps the proof layout hash-agile.
                 </td>
               </tr>
               <tr>
@@ -631,10 +646,11 @@
           <strong>Recommendation.</strong> Build a validity rollup whose data availability lives in
           QRL calldata and whose final on-chain proof is the c3 STARK that
           <code>StarkVerifier</code> already checks. Aggregate batch proofs with two-layer
-          recursion, Poseidon2 inside and keccak256 at the last layer, let L2 accounts sign with a
-          Poseidon2 hash-based scheme, and keep ML-DSA-87 at the L1 boundary through the bridge.
-          Start with a centralized sequencer and a single prover, with forced inclusion and an
-          escape hatch on L1, then move to a proof market and to sequencer decentralization.
+          recursion, a reviewed circuit hash inside and keccak256 at the last layer. Bind the
+          selected suite to a versioned identifier, let L2 accounts use a reviewed hash-based
+          signature scheme, and keep ML-DSA-87 at the L1 boundary through the bridge. Start with a
+          centralized sequencer and a single prover, with forced inclusion and an escape hatch on
+          L1, then move to a proof market and to sequencer decentralization.
         </p>
 
         <h3>Next steps, in order</h3>
@@ -642,9 +658,9 @@
           <li>
             <span class="m">M10</span>
             <span>
-              <strong>Poseidon2 AIR and layout version 2.</strong> Multi-commitment layout with
-              quotient chunks, measured on the developer node; a Kurtosis gas report for the
-              existing cells.
+              <strong>Hash security gate and layout version 2.</strong> Add a versioned hash-suite
+              identifier and multi-commitment layout with quotient chunks. Benchmark candidate
+              suites against a conservative keccak baseline before selection.
             </span>
           </li>
           <li>
@@ -658,8 +674,8 @@
           <li>
             <span class="m">M12</span>
             <span>
-              <strong>Recursion prototype.</strong> Poseidon2 inner layer, keccak256 final layer,
-              with the Fibonacci AIR as the payload.
+              <strong>Recursion prototype.</strong> Selected circuit hash in the inner layer,
+              keccak256 in the final layer, with the Fibonacci AIR as the payload.
             </span>
           </li>
           <li>
