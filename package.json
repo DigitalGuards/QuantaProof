@@ -42,6 +42,7 @@
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
+    "@theqrl/mldsa87": "^2.1.3",
     "prettier": "^3.6.2"
   }
 }

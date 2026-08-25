@@ -23,9 +23,13 @@ const viaIr = process.env.HYPERION_VIA_IR === '1';
 
 // Top-level deployable contracts (relative paths under contracts/hyperion/).
 // Interfaces, libraries and harnesses compile as transitive dependencies or
-// through scripts/hypc.js; they are never listed here. StarkFactRegistry.hyp
-// and bridge/StateBridge.hyp join this list when they land (milestone M8).
-const DEPLOYABLE = ['StarkVerifier.hyp', 'StarkVerifierGasMeter.hyp'];
+// through scripts/hypc.js; they are never listed here.
+const DEPLOYABLE = [
+  'StarkVerifier.hyp',
+  'StarkVerifierGasMeter.hyp',
+  'StarkFactRegistry.hyp',
+  'bridge/StateBridge.hyp',
+];
 
 function ensureCompilerAvailable() {
   const result = spawnSync(compilerBinary, ['--version'], { encoding: 'utf8' });

@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "./interfaces/IStarkVerifier.hyp";
+import "./interfaces/IStarkFactRegistry.hyp";
+
+/// @title StarkFactRegistry
+/// @notice Records which public values have been proven under one verifier
+///         deployment so that consumers (docs/BRIDGE.md: StateBridge) can check
+///         a fact with one storage read instead of re-running the verifier.
+/// @dev A fact is keyed by the public values only:
+///          fact = keccak256(abi.encodePacked(address(verifier), programId, keccak256(publicValues)))
+///      The proof bytes never enter the key. A proof carries unobserved witness
+///      bytes (a proof-of-work witness at zero PoW bits is never checked, and
+///      sibling values of duplicate query openings are free), so keccak256(proof)
+///      is malleable: many distinct proof encodings verify the same statement.
+///      The `proofId` in FactRegistered is diagnostic only, matching the id the
+///      gas meter and the vector files report. `programId` identifies the AIR
+///      and its parameter set (for example keccak256("fibonacci-c3-v1")); the
+///      verifier address pins the code that checked the proof, so a fact
+///      registered through one deployment can never satisfy a consumer bound to
+///      another verifier or program.
+contract StarkFactRegistry is IStarkFactRegistry {
+    /// @notice Emitted once per successful registerFact call.
+    /// @param fact registry key, see factKey
+    /// @param publicValuesHash keccak256 of the public values that were proven
+    /// @param proofId keccak256 of the proof bytes (diagnostic, malleable)
+    event FactRegistered(bytes32 indexed fact, bytes32 indexed publicValuesHash, bytes32 proofId);
+
+    error ZeroVerifier();
+    error InvalidProof();
+
+    IStarkVerifier public immutable verifier;
+    bytes32 public immutable programId;
+
+    /// @dev Registered facts, read through isValid. Kept internal on purpose:
+    ///      the legacy code generator of the current 64-byte hypc derives a
+    ///      different storage slot in auto-generated getters for bytes32 keys
+    ///      than in contract code (docs/BRIDGE.md, toolchain notes).
+    mapping(bytes32 => bool) internal facts;
+
+    constructor(address verifier_, bytes32 programId_) {
+        if (verifier_ == address(0)) revert ZeroVerifier();
+        verifier = IStarkVerifier(verifier_);
+        programId = programId_;
+    }
+
+    /// @notice Registry key of the public values whose keccak256 is `publicValuesHash`.
+    /// @dev address(verifier) packs as 64 bytes, programId and the hash as 32
+    ///      bytes each: a 128-byte preimage. Consumers that compute the key
+    ///      offline (StateBridge, the JS tests) mirror exactly this layout.
+    function factKey(bytes32 publicValuesHash) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(address(verifier), programId, publicValuesHash));
+    }
+
+    /// @inheritdoc IStarkFactRegistry
+    function isValid(bytes32 fact) external view returns (bool) {
+        return facts[fact];
+    }
+
+    /// @inheritdoc IStarkFactRegistry
+    /// @dev Reverts with InvalidProof when the verifier returns false. A
+    ///      verifier revert (malformed proof, custom error) propagates as is,
+    ///      so callers see the verifier's own selector. Registering the same
+    ///      public values twice is allowed and idempotent.
+    function registerFact(
+        bytes calldata proof,
+        bytes calldata publicValues
+    ) external returns (bytes32 fact) {
+        if (!verifier.verify(proof, publicValues)) revert InvalidProof();
+        bytes32 publicValuesHash = keccak256(publicValues);
+        fact = factKey(publicValuesHash);
+        facts[fact] = true;
+        emit FactRegistered(fact, publicValuesHash, keccak256(proof));
+    }
+}

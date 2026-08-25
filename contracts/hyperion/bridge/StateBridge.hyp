@@ -1,0 +1,240 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "../interfaces/IStarkFactRegistry.hyp";
+
+/// @title StateBridge
+/// @notice Minimal L1 side of a validity rollup on QRL 2.0 (docs/BRIDGE.md):
+///         a state root advanced by STARK-proven batches, an append-only
+///         deposit accumulator, and withdrawals authorised by an ML-DSA-87
+///         signature over a leaf committed in the state root.
+/// @dev Skeleton scope. The state root is used directly as the root of the
+///      withdrawal tree; a real L2 commits a withdrawal subtree inside its
+///      state root and the inclusion proof walks through it. Escape hatches,
+///      challenge windows, forced inclusion, sequencer roles and fee handling
+///      are out of scope. The bridge is verifier-agnostic: it consumes facts
+///      from IStarkFactRegistry and only pins the (verifier, programId) pair
+///      that keys them. Every hash is a high-level keccak256 over
+///      abi.encodePacked data; addresses pack as 64 bytes, uint512 as 64 bytes
+///      and bytes32 as 32 bytes, so the JS side hashes the same byte strings.
+///      Mappings are internal with explicit view functions: the legacy code
+///      generator of the current 64-byte hypc derives a different storage slot
+///      in auto-generated getters for bytes32 and address keys than in
+///      contract code (docs/BRIDGE.md, toolchain notes), so public mapping
+///      getters would read the wrong slot.
+contract StateBridge {
+    /// @notice A batch advanced the state root.
+    /// @param batchIndex zero-based index of the accepted batch
+    event BatchSubmitted(uint512 indexed batchIndex, bytes32 prevRoot, bytes32 newRoot, bytes32 fact);
+
+    /// @notice A deposit leaf was appended to the accumulator.
+    /// @param index zero-based deposit index (the leaf's position)
+    event Deposited(uint512 indexed index, address indexed sender, uint512 amount, bytes32 leaf);
+
+    /// @notice A withdrawal leaf was paid out.
+    event Withdrawn(bytes32 indexed leaf, address indexed recipient, uint512 amount);
+
+    error ZeroAddress();
+    error StaleRoot();
+    error BadPublicValues();
+    error FactMismatch();
+    error WrongKey();
+    error NotIncluded();
+    error AlreadyWithdrawn();
+    error BadSignature();
+    error TransferFailed();
+
+    /// @dev Domain separator for withdrawal signatures. It is both the prefix
+    ///      of the signed message and the ML-DSA-87 context string, so a
+    ///      signature made for any other QRL purpose (QNS-SIGN-v1, a
+    ///      transaction, another bridge) can never authorise a withdrawal.
+    bytes internal constant WITHDRAW_CONTEXT = "QP-WITHDRAW-v1";
+
+    /// @dev Public values of a batch proof: 16 Goldilocks elements, 8 bytes
+    ///      little-endian each, holding prevRoot then newRoot as 32-bit
+    ///      big-endian limbs (every element stays far below the field modulus).
+    uint256 internal constant PUBLIC_VALUES_LENGTH = 128;
+    uint256 internal constant ROOT_LIMBS = 8;
+    uint512 internal constant LIMB_BOUND = 1 << 32;
+
+    IStarkFactRegistry public immutable registry;
+    /// @notice Verifier and program the registry facts are expected to be keyed by.
+    address public immutable verifier;
+    bytes32 public immutable programId;
+
+    bytes32 public stateRoot;
+    /// @notice Number of accepted batches; the index the next batch receives.
+    uint512 public batchIndex;
+    /// @notice Number of deposits; the index the next deposit leaf receives.
+    uint512 public depositCount;
+    /// @notice Rolling commitment keccak256(prev, leaf) over every deposit leaf.
+    bytes32 public depositAccumulator;
+    mapping(bytes32 => bool) internal spent;
+
+    constructor(address registry_, bytes32 programId_, address verifier_, bytes32 genesisRoot) {
+        if (registry_ == address(0) || verifier_ == address(0)) revert ZeroAddress();
+        registry = IStarkFactRegistry(registry_);
+        programId = programId_;
+        verifier = verifier_;
+        stateRoot = genesisRoot;
+    }
+
+    /// @notice Accepts plain value transfers so the withdrawal pool can be
+    ///         funded (tests) or topped up by an operator.
+    receive() external payable {}
+
+    /// @notice Whether the withdrawal leaf has been paid out.
+    function withdrawn(bytes32 leaf) external view returns (bool) {
+        return spent[leaf];
+    }
+
+    /// @notice Registry key the bridge expects for public values hashing to
+    ///         `publicValuesHash`; mirrors StarkFactRegistry.factKey.
+    function expectedFact(bytes32 publicValuesHash) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(verifier, programId, publicValuesHash));
+    }
+
+    /// @notice The 64-byte message representative a withdrawal signature covers:
+    ///         shake256("QP-WITHDRAW-v1" || leaf || recipient).
+    /// @dev Exposed so wallets can reproduce the digest they are asked to sign.
+    function withdrawDigest(bytes32 leaf, address recipient) public pure returns (bytes64) {
+        return shake256(abi.encodePacked(WITHDRAW_CONTEXT, leaf, recipient));
+    }
+
+    /// @notice ML-DSA-87 check of a withdrawal signature through precompile 0x03,
+    ///         with "QP-WITHDRAW-v1" as the FIPS 204 context string.
+    /// @dev The builtin packs digest || publicKey || signature || uint8(len) || context
+    ///      and maps the exact 64-byte success word to true; every other return
+    ///      (empty data, a zero word, a malformed length) is false.
+    function verifyWithdrawSignature(
+        bytes32 leaf,
+        address recipient,
+        bytes calldata signature,
+        bytes calldata publicKey
+    ) public pure returns (bool) {
+        return mldsa87verify(withdrawDigest(leaf, recipient), signature, publicKey, WITHDRAW_CONTEXT);
+    }
+
+    /// @notice Advance the state root from `prevRoot` to `newRoot` with a proof
+    ///         whose public values encode exactly that transition.
+    /// @dev When the fact is already registered (by anyone, through the
+    ///      registry directly) the proof bytes are ignored and may be empty.
+    ///      Otherwise the registry verifies the proof and its own revert
+    ///      (InvalidProof or the verifier's error) propagates unchanged.
+    function submitBatch(
+        bytes32 prevRoot,
+        bytes32 newRoot,
+        bytes calldata publicValues,
+        bytes calldata proof
+    ) external {
+        if (prevRoot != stateRoot) revert StaleRoot();
+        if (!encodesRoots(publicValues, prevRoot, newRoot)) revert BadPublicValues();
+
+        bytes32 fact = expectedFact(keccak256(publicValues));
+        if (!registry.isValid(fact)) {
+            // A registry bound to another verifier or program would register
+            // under a different key; refusing here keeps the immutables honest.
+            if (registry.registerFact(proof, publicValues) != fact) revert FactMismatch();
+        }
+
+        uint512 index = batchIndex;
+        stateRoot = newRoot;
+        batchIndex = index + 1;
+        emit BatchSubmitted(index, prevRoot, newRoot, fact);
+    }
+
+    /// @notice Deposit value for credit on L2. The leaf commits to the sender,
+    ///         the amount and the deposit index; the accumulator lets an L2
+    ///         batch prove it consumed the deposits in order.
+    function deposit() external payable {
+        uint512 index = depositCount;
+        uint512 amount = uint512(msg.value);
+        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, amount, index));
+        depositAccumulator = keccak256(abi.encodePacked(depositAccumulator, leaf));
+        depositCount = index + 1;
+        emit Deposited(index, msg.sender, amount, leaf);
+    }
+
+    /// @notice Pay out a withdrawal leaf committed in the current state root.
+    /// @param pkHash keccak256 of the ML-DSA-87 public key the leaf is bound to
+    /// @param recipient address that receives `amount`
+    /// @param amount value in planck
+    /// @param nonce per-key uniqueness value chosen on L2
+    /// @param merkleProof sibling digests from the leaf level up to the root
+    /// @param leafIndex position of the leaf; bit i selects the side at level i
+    /// @param signature ML-DSA-87 signature (4627 bytes) over the withdrawal digest
+    /// @param publicKey ML-DSA-87 public key (2592 bytes) hashing to `pkHash`
+    /// @dev The signed digest is shake256("QP-WITHDRAW-v1" || leaf || recipient)
+    ///      (64 bytes) verified with the same string as the ML-DSA-87 context.
+    ///      Reentrancy is closed by marking the leaf before the transfer.
+    function withdraw(
+        bytes32 pkHash,
+        address recipient,
+        uint512 amount,
+        uint512 nonce,
+        bytes32[] calldata merkleProof,
+        uint512 leafIndex,
+        bytes calldata signature,
+        bytes calldata publicKey
+    ) external {
+        if (keccak256(publicKey) != pkHash) revert WrongKey();
+        bytes32 leaf = keccak256(abi.encodePacked(pkHash, recipient, amount, nonce));
+        if (!verifyInclusion(leaf, merkleProof, leafIndex, stateRoot)) revert NotIncluded();
+        if (spent[leaf]) revert AlreadyWithdrawn();
+        if (!verifyWithdrawSignature(leaf, recipient, signature, publicKey)) revert BadSignature();
+
+        spent[leaf] = true;
+        // Call value is a uint256; a leaf above that range can never be paid.
+        if (amount > type(uint256).max) revert TransferFailed();
+        (bool ok, ) = payable(recipient).call{value: uint256(amount)}("");
+        if (!ok) revert TransferFailed();
+        emit Withdrawn(leaf, recipient, amount);
+    }
+
+    /// @notice Check that `publicValues` is the canonical encoding of
+    ///         (prevRoot, newRoot): element i is limb i of prevRoot, element
+    ///         8 + i is limb i of newRoot, each element an 8-byte little-endian
+    ///         Goldilocks element below 2^32.
+    function encodesRoots(
+        bytes calldata publicValues,
+        bytes32 prevRoot,
+        bytes32 newRoot
+    ) public pure returns (bool) {
+        if (publicValues.length != PUBLIC_VALUES_LENGTH) return false;
+        for (uint256 i = 0; i < 2 * ROOT_LIMBS; ++i) {
+            uint512 element = 0;
+            for (uint256 k = 0; k < 8; ++k) {
+                element |= uint512(uint8(publicValues[8 * i + k])) << (8 * k);
+            }
+            if (element >= LIMB_BOUND) return false;
+            uint256 root = uint256(i < ROOT_LIMBS ? prevRoot : newRoot);
+            uint256 limbIndex = i % ROOT_LIMBS;
+            uint256 limb = (root >> (32 * (ROOT_LIMBS - 1 - limbIndex))) & 0xffffffff;
+            if (element != uint512(limb)) return false;
+        }
+        return true;
+    }
+
+    /// @notice Plain binary keccak256 Merkle inclusion: parent = keccak256(left || right),
+    ///         the side of the node at level i given by bit i of `leafIndex`.
+    /// @dev An index with set bits above the proof length is rejected, so a
+    ///      leaf cannot be replayed under a different index than its own.
+    function verifyInclusion(
+        bytes32 leaf,
+        bytes32[] calldata merkleProof,
+        uint512 leafIndex,
+        bytes32 root
+    ) public pure returns (bool) {
+        if (leafIndex >> merkleProof.length != 0) return false;
+        bytes32 node = leaf;
+        uint512 index = leafIndex;
+        for (uint256 i = 0; i < merkleProof.length; ++i) {
+            bytes32 sibling = merkleProof[i];
+            node = (index & 1) == 0
+                ? keccak256(abi.encodePacked(node, sibling))
+                : keccak256(abi.encodePacked(sibling, node));
+            index >>= 1;
+        }
+        return node == root;
+    }
+}

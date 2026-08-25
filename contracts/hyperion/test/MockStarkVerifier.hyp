@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "../interfaces/IStarkVerifier.hyp";
+
+/// @title MockStarkVerifier
+/// @notice Test double for IStarkVerifier: accepts exactly the proofs whose
+///         keccak256 has been allow-listed with setAccepted, or reverts with
+///         MockRevert when setRevert(true) is active.
+/// @dev Test-only. Keeps the registry and bridge suite (test/contracts/bridge.test.js)
+///      independent of the real verifier: the bridge never inspects proof
+///      bytes, so any byte string can stand in for a proof here. The public
+///      values are ignored on purpose; binding facts to them is the
+///      registry's job.
+contract MockStarkVerifier is IStarkVerifier {
+    error MockRevert();
+
+    // Internal with an explicit view: auto-generated getters for bytes32 keys
+    // read the wrong slot under the legacy code generator (docs/BRIDGE.md).
+    mapping(bytes32 => bool) internal accepted;
+    bool public shouldRevert;
+
+    function setAccepted(bytes32 proofHash, bool ok) external {
+        accepted[proofHash] = ok;
+    }
+
+    function isAccepted(bytes32 proofHash) external view returns (bool) {
+        return accepted[proofHash];
+    }
+
+    function setRevert(bool value) external {
+        shouldRevert = value;
+    }
+
+    /// @inheritdoc IStarkVerifier
+    function verify(bytes calldata proof, bytes calldata) external view returns (bool) {
+        if (shouldRevert) revert MockRevert();
+        return accepted[keccak256(proof)];
+    }
+}
