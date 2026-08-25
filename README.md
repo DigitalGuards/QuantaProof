@@ -2,6 +2,8 @@
 
 QuantaProof is a Hyperion-native verifier for Plonky3-compatible STARK proofs on the 64-byte QRL 2.0 virtual machine, together with the Rust prover that produces the proofs and test vectors, a fact registry and bridge skeleton for the L1 side of a rollup, and the gas measurements that decide the L2 design.
 
+**Research project.** QuantaProof is a DigitalGuards research project: experimental, unaudited, and subject to breaking changes. It exists to measure what post-quantum validity proofs cost on QRL 2.0 and to inform an L2 design. Nothing in this repository is production software, and nothing here should secure funds.
+
 QRL 2.0 has no pairing precompiles, so pairing-based SNARK verifiers cannot run there. Validity proofs on QRL take the hash-and-field-arithmetic shape of a STARK, which is post-quantum by construction. The QRVM word is 512 bits, `address` is 64 bytes and every ABI slot is 64 bytes, so existing Solidity verifiers serve as reference material only.
 
 Status: the verifier, the prover, the vectors, the fact registry and the bridge skeleton are complete and measured on the gqrl developer node (milestones M0 to M8 of [`docs/DECISIONS.md`](docs/DECISIONS.md)); the Kurtosis release gate waits for its image build and the L2 architecture document is derived from the measured numbers. `StarkVerifier.verify` accepts every valid vector of the sixteen parameter presets and rejects every mutated vector with its recorded custom error. Headline numbers (developer node, optimizer runs 200, whole `verifyAndLog` transactions; [`docs/GAS-REPORT.md`](docs/GAS-REPORT.md) has every cell):
