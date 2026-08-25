@@ -15,11 +15,12 @@ import "./interfaces/IStarkFactRegistry.hyp";
 ///      sibling values of duplicate query openings are free), so keccak256(proof)
 ///      is malleable: many distinct proof encodings verify the same statement.
 ///      The `proofId` in FactRegistered is diagnostic only, matching the id the
-///      gas meter and the vector files report. `programId` identifies the AIR
-///      and its parameter set (for example keccak256("fibonacci-c3-v1")); the
-///      verifier address pins the code that checked the proof, so a fact
+///      gas meter and the vector files report. `programId` identifies the AIR,
+///      proof protocol, parameter set and public-value schema; the verifier
+///      address pins the code that checked the proof, so a fact
 ///      registered through one deployment can never satisfy a consumer bound to
-///      another verifier or program.
+///      another verifier or program. The constructor requires `programId` to
+///      equal the verifier's canonical program identifier.
 contract StarkFactRegistry is IStarkFactRegistry {
     /// @notice Emitted once per successful registerFact call.
     /// @param fact registry key, see factKey
@@ -28,6 +29,7 @@ contract StarkFactRegistry is IStarkFactRegistry {
     event FactRegistered(bytes32 indexed fact, bytes32 indexed publicValuesHash, bytes32 proofId);
 
     error ZeroVerifier();
+    error ProgramMismatch();
     error InvalidProof();
 
     IStarkVerifier public immutable verifier;
@@ -41,7 +43,9 @@ contract StarkFactRegistry is IStarkFactRegistry {
 
     constructor(address verifier_, bytes32 programId_) {
         if (verifier_ == address(0)) revert ZeroVerifier();
-        verifier = IStarkVerifier(verifier_);
+        IStarkVerifier candidate = IStarkVerifier(verifier_);
+        if (candidate.programIdentifier() != programId_) revert ProgramMismatch();
+        verifier = candidate;
         programId = programId_;
     }
 
@@ -51,6 +55,21 @@ contract StarkFactRegistry is IStarkFactRegistry {
     ///      offline (StateBridge, the JS tests) mirror exactly this layout.
     function factKey(bytes32 publicValuesHash) public view returns (bytes32) {
         return keccak256(abi.encodePacked(address(verifier), programId, publicValuesHash));
+    }
+
+    /// @inheritdoc IStarkFactRegistry
+    function verifierAddress() external view returns (address) {
+        return address(verifier);
+    }
+
+    /// @inheritdoc IStarkFactRegistry
+    function programIdentifier() external view returns (bytes32) {
+        return programId;
+    }
+
+    /// @inheritdoc IStarkFactRegistry
+    function publicValuesLength() external view returns (uint512) {
+        return verifier.publicValuesLength();
     }
 
     /// @inheritdoc IStarkFactRegistry

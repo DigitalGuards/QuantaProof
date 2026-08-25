@@ -1,6 +1,6 @@
 # QuantaStark: post-quantum STARK verifier for QRL 2.0
 
-QuantaStark is a Hyperion-native verifier for Plonky3-compatible STARK proofs on the 64-byte QRL 2.0 virtual machine, together with the Rust prover that produces the proofs and test vectors, a fact registry and bridge skeleton for the L1 side of a rollup, and the gas measurements that decide the L2 design.
+QuantaStark is a Hyperion-native verifier for Plonky3-compatible STARK proofs on the 64-byte QRL 2.0 virtual machine, together with the Rust prover that produces the proofs and test vectors, a fact registry and bridge skeleton for the L1 side of a rollup, and the gas measurements that decide the L2 design. The current proof is a validity proof for scaling. It does not provide zero knowledge or transaction privacy; [`docs/SECURITY-STATUS.md`](docs/SECURITY-STATUS.md) records the exact boundary.
 
 **Research project.** QuantaStark is a DigitalGuards research project: experimental, unaudited, and subject to breaking changes. It exists to measure what post-quantum validity proofs cost on QRL 2.0 and to inform an L2 design. Nothing in this repository is production software, and nothing here should secure funds.
 
@@ -16,7 +16,7 @@ Status: the verifier, the prover, the vectors, the fact registry and the bridge 
 | `fib_c1_n12` (100 queries) |      82,672 |       4,937,007 |           3,561,810 |
 | `fib_c1_n20`               |     226,641 |      10,534,049 |           6,807,827 |
 
-40 of the 44 measured cells sit at or below the 8,000,000 target; the largest, `fib_c1-binary_n20` (388 KB proof), takes 17,065,391 gas, 85 percent of the 20,000,000 block cap. The runtime code is 14,458 bytes (cap 24,576). Two facts from the measurements shape the L2 design: calldata is 20 to 43 percent of a verification transaction, and the execution client's transaction pool refuses transactions above 131,072 bytes, so proofs above about 123 KB (c1 from n = 16, c2 at n = 20, every binary-folding preset from n = 16) need a raised pool cap or staged verification before they can be submitted as one transaction.
+40 of the 44 measured cells sit at or below the 8,000,000 target; the largest, `fib_c1-binary_n20` (388 KB proof), takes 17,065,391 gas, 85 percent of the 20,000,000 block cap. The current runtime code is 14,646 bytes (cap 24,576). Two facts from the measurements shape the L2 design: calldata is 20 to 43 percent of a verification transaction, and the execution client's transaction pool refuses transactions above 131,072 bytes, so proofs above about 123 KB (c1 from n = 16, c2 at n = 20, every binary-folding preset from n = 16) need a raised pool cap or staged verification before they can be submitted as one transaction.
 
 ## Design invariants
 
@@ -28,6 +28,8 @@ Status: the verifier, the prover, the vectors, the fact registry and the bridge 
 - Target network: the 64-byte QRL 2.0 network (QIP-55) with the ML-DSA-87 verify precompile at `0x03` (64-byte digest) and SHAKE256 at `0x06`. Every compile uses the 64-byte compiler from the `hyperion-stark` worktree.
 - Contract tests run against a live QRVM (a `gqrl --dev` node or the Kurtosis composition). Node unit tests check the JS references against the Rust vectors without a chain, and the Rust mirror verifier must reproduce the upstream transcript byte for byte.
 - Facts are keyed by public values. A proof hash is never a key: proof bytes contain unobserved witness bytes and are malleable.
+- Every committed FRI preset is an experimental benchmark profile. Non-local deployment needs an explicit experimental-soundness acknowledgement.
+- Every verifier exposes a canonical AIR-and-parameters identifier and public-value length. The registry and `StateBridge` require the identifier, verifier and 128-byte batch statement to agree at construction.
 
 ## Structure
 
@@ -58,6 +60,7 @@ npm run prover:build
 npm run prover:vectors                                                # writes test/vectors/*.json (n = 10, 12)
 npm test                                                              # compile + test:unit + lint:prose
 npm run format:check
+npm run check:provenance                                              # clean source plus source-matched hypc and gqrl
 ```
 
 `npm run compile` writes `build/hyperion/manifest.json` with the exact hypc build and the pinned Plonky3 version. `npm run size` prints the runtime and initcode size table and fails above the caps. The Rust gates are `cargo fmt --check`, `cargo clippy -D warnings` and `cargo test --release`, all with `--manifest-path prover/Cargo.toml`. The larger vectors are generated on demand:
@@ -72,6 +75,7 @@ STARK_VECTORS_LARGE=1 npm run test:unit                              # include t
 ```bash
 npm run dev-node &                                                    # gqrl --dev, chain 1337, http://127.0.0.1:8545
 STARK_RPC_URL=http://127.0.0.1:8545 HYPERION_COMPILER=../hyperion-stark/build/hypc/hypc npm run test:contracts
+STARK_RPC_URL=http://127.0.0.1:8545 HYPERION_COMPILER=../hyperion-stark/build/hypc/hypc npm run test:protocol
 ```
 
 Without `STARK_RPC_URL` the contract suites report themselves as skipped, which is what CI does.
@@ -93,12 +97,13 @@ Deploy and measure (developer node shown; on Kurtosis use `STARK_CONFIG=config/l
 ```bash
 export HYPERION_COMPILER=../hyperion-stark/build/hypc/hypc
 STARK_CONFIG=config/dev-node.json npm run deploy -- --preset all                      # 16 verifiers + gas meters
-STARK_DEPLOY_BRIDGE=1 STARK_CONFIG=config/dev-node.json npm run deploy -- --preset c3  # plus registry and bridge
+# A bridge deployment needs a separate batch verifier with 128-byte public values:
+STARK_DEPLOY_BRIDGE=1 STARK_BRIDGE_VERIFIER=Q... STARK_BRIDGE_PROGRAM_ID=0x... STARK_CONFIG=config/dev-node.json npm run deploy -- --preset none
 STARK_CONFIG=config/dev-node.json npm run verify:proof -- --vector test/vectors/fib_c3_n12.json
 STARK_CONFIG=config/dev-node.json npm run gas:report                                   # regenerates docs/GAS-REPORT.md
 ```
 
-`deploy` compiles `StarkVerifier.hyp` once per preset with the constants substituted and records one verifier and gas meter per preset in the deployment record. `verify:proof` picks the verifier of the vector's preset, sends the proof through the gas meter and exits non-zero when the outcome differs from the vector's expectation. `gas:report` measures every valid vector, keeps the measurements per optimizer setting under `build/gas-report/` and renders the tables, the optimizer comparison, the model deviation, the extrapolation to n = 24 and the phase breakdown. The developer node signs with its own account; `STARK_PUBLIC_DEV_ACCOUNT` selects a published fixture account from the sibling `qrl-package` checkout and is accepted only with a loopback RPC URL and chain id 3151909. Use `TESTNET_SEED` in the ignored `.env` for other networks and keep every seed out of tracked files and shell history.
+`deploy` compiles `StarkVerifier.hyp` once per preset with the constants substituted and records one verifier and gas meter per preset in the deployment record. Bridge-only deployment selects `--preset none` automatically. `verify:proof` picks the verifier of the vector's preset, sends the proof through the gas meter and exits non-zero when the outcome differs from the vector's expectation. `gas:report` measures every valid vector, keeps the measurements per optimizer setting under `build/gas-report/` and renders the tables, the optimizer comparison, the model deviation, the extrapolation to n = 24 and the phase breakdown. The developer node signs with its own account; `STARK_PUBLIC_DEV_ACCOUNT` selects a published fixture account from the sibling `qrl-package` checkout and is accepted only with a loopback RPC URL and chain id 3151909. Use `TESTNET_SEED` in the ignored `.env` for other networks and keep every seed out of tracked files and shell history.
 
 ## Documentation
 
@@ -109,6 +114,7 @@ STARK_CONFIG=config/dev-node.json npm run gas:report                            
 - [`docs/GAS-REPORT.md`](docs/GAS-REPORT.md): generated by `npm run gas:report`; every cell under three optimizer settings, the model deviation and the extrapolation.
 - [`docs/GAS-PRIMITIVES.md`](docs/GAS-PRIMITIVES.md): measured gas of the Goldilocks and Fp2 primitives and the compiler behaviour behind the numbers.
 - [`docs/BRIDGE.md`](docs/BRIDGE.md): the fact registry and the bridge skeleton with ML-DSA-87 withdrawals.
+- [`docs/SECURITY-STATUS.md`](docs/SECURITY-STATUS.md): zero-knowledge scope, soundness classification, Poseidon2 review gate, bridge compatibility and production gates.
 - [`docs/compiler/HYPC-LEGACY-CODEGEN-DEFECTS.md`](docs/compiler/HYPC-LEGACY-CODEGEN-DEFECTS.md): two confirmed legacy code generator defects with reproductions.
 - [`docs/L2-ARCHITECTURE.md`](docs/L2-ARCHITECTURE.md): the L2 design decision grounded in the measured gas.
 

@@ -53,6 +53,31 @@ forwards every byte unchanged; proofs and transcripts are identical with and wit
 
 `c3-a3-f3` is `c3` and `c3-a1-f3` is `c3-binary`; the sweep therefore adds ten distinct cells.
 
+### 1.3 Program identifier
+
+Every verifier exposes a canonical `programIdentifier()` for registry and
+bridge compatibility. For the Fibonacci verifier it is:
+
+```text
+keccak256(abi.encodePacked(
+  "QSTARK-FIBONACCI-v1",
+  uint512(24),
+  uint512(log_blowup),
+  uint512(log_final_poly_len),
+  uint512(max_log_arity),
+  uint512(num_queries),
+  uint512(commit_proof_of_work_bits),
+  uint512(query_proof_of_work_bits)
+))
+```
+
+Each `uint512` occupies 64 big-endian bytes in the packed QRVM ABI. The domain
+identifies the AIR, field, hash suite and proof layout; `24` is the public-value
+byte length. Trace length stays in the proof header because one deployment
+accepts several supported lengths. `scripts/lib/presets.js::programIdFor`
+reproduces the formula. The verifier address remains part of every registry
+fact key, so the identifier complements the code binding.
+
 ## 2. Notation and wire encodings
 
 - `F`: a base field element. Wire form: the canonical value (`< p`) as an 8-byte little-endian

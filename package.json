@@ -14,6 +14,8 @@
     "test": "npm run compile && npm run test:unit && npm run lint:prose",
     "test:unit": "node --test test/unit/*.test.js",
     "test:contracts": "node --test test/contracts/*.test.js",
+    "test:protocol": "node scripts/protocol-gate.js",
+    "check:provenance": "node scripts/check-provenance.js",
     "dev-node": "./scripts/dev-node.sh",
     "build:local-network": "./scripts/build-local-node-image.sh && ./scripts/build-local-qrysm-images.sh",
     "kurtosis:start": "./scripts/kurtosis-start.sh",
@@ -32,7 +34,8 @@
     "plonky3",
     "post-quantum",
     "hyperion",
-    "zero-knowledge",
+    "validity-proof",
+    "scalability",
     "rollup"
   ],
   "dependencies": {

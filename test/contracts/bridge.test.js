@@ -89,6 +89,21 @@ function factKey(verifier, programId, publicValuesHash) {
   );
 }
 
+function fibonacciProgramId(config) {
+  return abi.keccak256Hex(
+    abi.concatBytes([
+      utf8('QSTARK-FIBONACCI-v1'),
+      abi.encodeUint(24),
+      abi.encodeUint(config.logBlowup),
+      abi.encodeUint(config.logFinalPolyLen),
+      abi.encodeUint(config.maxLogArity),
+      abi.encodeUint(config.numQueries),
+      abi.encodeUint(config.commitPowBits),
+      abi.encodeUint(config.queryPowBits),
+    ])
+  );
+}
+
 // (prevRoot, newRoot) as 16 Goldilocks elements: element i is limb i of prevRoot,
 // element 8 + i is limb i of newRoot, limbs are 32-bit big-endian slices of the
 // root and every element is written as 8 bytes little-endian.
@@ -213,6 +228,12 @@ test('StarkFactRegistry and StateBridge', { skip, timeout: 900000 }, async (t) =
   await t.test('constructor state and getters', async () => {
     assert.ok(abi.sameAddress(await registry.callOne('verifier()', [], 'address'), mock.address));
     assertHex(await registry.callOne('programId()', [], 'bytes32'), PROGRAM_ID);
+    assert.ok(
+      abi.sameAddress(await registry.callOne('verifierAddress()', [], 'address'), mock.address)
+    );
+    assertHex(await registry.callOne('programIdentifier()', [], 'bytes32'), PROGRAM_ID);
+    assert.equal(await registry.callOne('publicValuesLength()', [], 'uint512'), 128n);
+    assert.equal(await mock.callOne('publicValuesLength()', [], 'uint512'), 128n);
     assert.ok(abi.sameAddress(await bridge.callOne('registry()', [], 'address'), registry.address));
     assert.ok(abi.sameAddress(await bridge.callOne('verifier()', [], 'address'), mock.address));
     assertHex(await bridge.callOne('programId()', [], 'bytes32'), PROGRAM_ID);
@@ -238,17 +259,46 @@ test('StarkFactRegistry and StateBridge', { skip, timeout: 900000 }, async (t) =
     await assert.rejects(
       ctx.sender.estimateGas({ data: `${artifacts.StateBridge.bytecode}${bridgeArgs.slice(2)}` })
     );
+
+    // The registry refuses metadata that disagrees with its verifier.
+    const wrongProgramArgs = abi.bytesToHex(
+      H.encodeArgs(['address', 'bytes32'], [mock.address, randomDigest()])
+    );
+    await assert.rejects(
+      ctx.sender.estimateGas({
+        data: `${artifacts.StarkFactRegistry.bytecode}${wrongProgramArgs.slice(2)}`,
+      })
+    );
+
+    // The bridge validates all three parts of the registry binding before it
+    // accepts the registry: verifier, program id and public-value shape.
+    const otherMock = await deploy(ctx, artifacts.MockStarkVerifier, [], []);
+    for (const values of [
+      [registry.address, randomDigest(), mock.address, GENESIS_ROOT],
+      [registry.address, PROGRAM_ID, otherMock.address, GENESIS_ROOT],
+    ]) {
+      const args = abi.bytesToHex(
+        H.encodeArgs(['address', 'bytes32', 'address', 'bytes32'], values)
+      );
+      await assert.rejects(
+        ctx.sender.estimateGas({ data: `${artifacts.StateBridge.bytecode}${args.slice(2)}` })
+      );
+    }
   });
 
   await t.test('registry accepts a mock-accepted proof and rejects others', async () => {
     const proof = randomBytes(96);
-    const publicValues = randomBytes(24);
+    const publicValues = randomBytes(128);
     const publicValuesHash = abi.keccak256Hex(publicValues);
     const expected = factKey(mock.address, PROGRAM_ID, publicValuesHash);
     await acceptProof(proof);
 
     assert.equal(await registry.callOne('isValid(bytes32)', [expected], 'bool'), false);
     assert.equal(await mock.callOne('verify(bytes,bytes)', [proof, publicValues], 'bool'), true);
+    assert.equal(
+      await mock.callOne('verify(bytes,bytes)', [proof, randomBytes(24)], 'bool'),
+      false
+    );
     assertHex(await registry.callOne(SIG_REGISTER, [proof, publicValues], 'bytes32'), expected);
 
     const result = await sendCall(ctx, registry, SIG_REGISTER, [proof, publicValues]);
@@ -279,7 +329,7 @@ test('StarkFactRegistry and StateBridge', { skip, timeout: 900000 }, async (t) =
     );
     // Unregistered public values stay invalid even with an accepted proof
     // hash, until registerFact runs for them.
-    const otherKey = factKey(mock.address, PROGRAM_ID, abi.keccak256Hex(randomBytes(24)));
+    const otherKey = factKey(mock.address, PROGRAM_ID, abi.keccak256Hex(randomBytes(128)));
     assert.equal(await registry.callOne('isValid(bytes32)', [otherKey], 'bool'), false);
   });
 
@@ -803,12 +853,30 @@ test('StarkFactRegistry and StateBridge', { skip, timeout: 900000 }, async (t) =
 
     // Public values are the Fibonacci triple here, so only the registry side
     // of the flow is exercised: the bridge needs the (prevRoot, newRoot) encoding.
-    const programId = abi.keccak256Hex(utf8(`fibonacci-${vector.name}-v1`));
+    const programId = fibonacciProgramId(vector.config);
     const real = await deploy(
       ctx,
       artifacts.StarkFactRegistry,
       ['address', 'bytes32'],
       [verifier.address, programId]
+    );
+    assertHex(await verifier.callOne('programIdentifier()', [], 'bytes32'), programId);
+    assertHex(await real.callOne('programIdentifier()', [], 'bytes32'), programId);
+    assert.equal(await verifier.callOne('publicValuesLength()', [], 'uint512'), 24n);
+    assert.equal(await real.callOne('publicValuesLength()', [], 'uint512'), 24n);
+
+    // A Fibonacci verifier cannot back StateBridge: its three field elements
+    // do not encode the bridge's two 32-byte roots.
+    const incompatibleArgs = abi.bytesToHex(
+      H.encodeArgs(
+        ['address', 'bytes32', 'address', 'bytes32'],
+        [real.address, programId, verifier.address, GENESIS_ROOT]
+      )
+    );
+    await assert.rejects(
+      ctx.sender.estimateGas({
+        data: `${artifacts.StateBridge.bytecode}${incompatibleArgs.slice(2)}`,
+      })
     );
     const fact = factKey(
       verifier.address,

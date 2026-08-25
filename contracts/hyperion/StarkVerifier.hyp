@@ -147,6 +147,27 @@ contract StarkVerifier is StarkVerifierCore, IStarkVerifier {
     uint512 internal constant COMMIT_POW_BITS = 0;
     uint512 internal constant QUERY_POW_BITS = 16;
 
+    /// @inheritdoc IStarkVerifier
+    function programIdentifier() external pure override returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "QSTARK-FIBONACCI-v1",
+                uint512(24),
+                LOG_BLOWUP,
+                LOG_FINAL_POLY_LEN,
+                MAX_LOG_ARITY,
+                NUM_QUERIES,
+                COMMIT_POW_BITS,
+                QUERY_POW_BITS
+            )
+        );
+    }
+
+    /// @inheritdoc IStarkVerifier
+    function publicValuesLength() external pure override returns (uint512) {
+        return 24;
+    }
+
     /// @notice FRI and soundness parameters this deployment verifies against.
     /// @return logBlowup log2 of the LDE blowup factor
     /// @return numQueries number of FRI queries

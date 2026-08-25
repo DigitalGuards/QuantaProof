@@ -19,9 +19,9 @@ carry a Merkle inclusion proof and an ML-DSA-87 signature checked through the
 | `test/lib/merkle-simple.js`                     | Plain binary keccak256 Merkle tree and the bridge leaf hashing. |
 
 Status: tested on the gqrl dev node (chain 1337) against `MockStarkVerifier`.
-The demo case that wires the real `StarkVerifier` skips itself while the
-verifier still reverts `NotImplemented()` (milestone M6) and activates on its
-own afterwards.
+The real Fibonacci verifier is tested through `StarkFactRegistry`. Its
+24-byte public-value statement is intentionally rejected by `StateBridge`,
+which requires the 128-byte batch root-transition statement.
 
 ## StarkFactRegistry
 
@@ -31,10 +31,14 @@ registerFact(bytes proof, bytes publicValues) returns (bytes32 fact)
 isValid(bytes32 fact) returns (bool)
 factKey(bytes32 publicValuesHash) returns (bytes32)
 verifier() / programId()
+verifierAddress() / programIdentifier() / publicValuesLength()
 event FactRegistered(bytes32 indexed fact, bytes32 indexed publicValuesHash, bytes32 proofId)
 ```
 
-`registerFact` calls `IStarkVerifier(verifier).verify(proof, publicValues)`
+The constructor requires
+`IStarkVerifier(verifier).programIdentifier() == programId_` and reverts with
+`ProgramMismatch()` when the metadata disagrees. `registerFact` then calls
+`IStarkVerifier(verifier).verify(proof, publicValues)`
 and reverts with `InvalidProof()` when it returns false. A verifier revert
 (malformed proof, custom error) propagates unchanged, so callers see the
 verifier's own selector. On success it stores
@@ -47,10 +51,12 @@ a 128-byte preimage (64-byte address, 32-byte program id, 32-byte hash) and
 emits `FactRegistered` with `proofId = keccak256(proof)`. Registering the same
 public values twice is allowed and idempotent.
 
-`programId` names the AIR and its parameter set (`keccak256("fibonacci-c3-v1")`
-style); together with the verifier address it pins which code checked the
-proof, so a fact from one deployment can never satisfy a consumer bound to
-another verifier or program.
+`programId` names the AIR, proof protocol, parameter set and public-value
+schema. A Fibonacci verifier computes it as
+`keccak256(abi.encodePacked("QSTARK-FIBONACCI-v1", uint512(24), LOG_BLOWUP, LOG_FINAL_POLY_LEN, MAX_LOG_ARITY, NUM_QUERIES, COMMIT_POW_BITS, QUERY_POW_BITS))`.
+Together with the verifier address it pins which code checked the proof, so a
+fact from one deployment can never satisfy a consumer bound to another verifier
+or program.
 
 ### Facts are keyed by public values
 
@@ -81,6 +87,15 @@ event Deposited(uint512 indexed index, address indexed sender, uint512 amount, b
 event Withdrawn(bytes32 indexed leaf, address indexed recipient, uint512 amount)
 ```
 
+The registry constructor first checks that its verifier reports the supplied
+`programId`. The bridge constructor checks that the registry reports the
+supplied `verifier` and `programId`, then requires
+`registry.publicValuesLength() == 128`. A mismatched registry reverts with
+`RegistryMismatch()` and an incompatible AIR reverts with
+`PublicValuesLengthMismatch()`. This prevents the bridge from being deployed
+behind the 24-byte Fibonacci verifier, a mislabeled program or another statement
+with a different encoding.
+
 `batchIndex` and `depositCount` are counters: the index the next batch or
 deposit receives. The events carry the zero-based index of the accepted item.
 
@@ -97,8 +112,8 @@ deposit receives. The events carry the zero-based index of the accepted item.
    the same key the registry derives. If `registry.isValid(fact)` the proof
    bytes are ignored (they may be empty); otherwise
    `registry.registerFact(proof, publicValues)` runs and its revert propagates.
-   A registry bound to another verifier or program would return a different
-   key, which reverts with `FactMismatch()`.
+   The constructor has already checked the registry binding. `FactMismatch()`
+   remains a fail-closed check on the returned key.
 4. `stateRoot = newRoot`, `batchIndex += 1`, `BatchSubmitted`.
 
 ### deposit
@@ -211,8 +226,9 @@ STARK_RPC_URL=http://127.0.0.1:8545 HYPERION_COMPILER=../hyperion-stark/build/hy
   node --test test/contracts/bridge.test.js
 ```
 
-One top-level test deploys mock, registry and bridge once and runs twelve
-cases: constructor state and zero-address guards; fact registration (accepted
+One top-level test deploys mock, registry and bridge once and covers:
+constructor state, zero-address guards, registry-binding mismatches and the
+Fibonacci public-value incompatibility; fact registration (accepted
 proof, rejected proof, propagated verifier revert, idempotent re-registration
 under a second proof); JS and on-chain fact keys; `submitBatch` happy path
 with both events; the lookup path with an empty proof; every `submitBatch`

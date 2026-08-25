@@ -1,0 +1,77 @@
+name: Full protocol gate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quantastark-protocol-runner
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+# This job needs a maintained runner with the source-built QRL toolchain. It is
+# intentionally absent from pull_request because a self-hosted runner must not
+# execute untrusted fork code. Repository variables provide runner-local paths.
+jobs:
+  protocol:
+    name: Pinned compiler and live QRVM
+    runs-on: [self-hosted, linux, x64, quantastark]
+    timeout-minutes: 90
+    env:
+      HYPERION_COMPILER: ${{ vars.QUANTASTARK_HYPERION_COMPILER }}
+      HYPERION_SOURCE_DIR: ${{ vars.QUANTASTARK_HYPERION_SOURCE_DIR }}
+      GQRL_BIN: ${{ vars.QUANTASTARK_GQRL_BIN }}
+      GO_QRL_SOURCE_DIR: ${{ vars.QUANTASTARK_GO_QRL_SOURCE_DIR }}
+      STARK_RPC_URL: http://127.0.0.1:8545
+      STARK_DEV_DATADIR: ${{ runner.temp }}/quantastark-${{ github.run_id }}
+      HYPERION_OPTIMIZE_RUNS: '200'
+      HYPERION_VIA_IR: '0'
+      STARK_RANDOM_OPS: '10000'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install
+        run: npm ci
+
+      - name: Check toolchain provenance
+        run: npm run check:provenance
+
+      - name: Start local QRL node
+        run: |
+          mkdir -p build
+          npm run dev-node > build/protocol-node.log 2>&1 &
+          echo $! > build/protocol-node.pid
+          node scripts/wait-for-rpc.js "$STARK_RPC_URL" 1337
+
+      - name: Run full protocol gate
+        run: npm run test:protocol
+
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: protocol-gate-${{ github.sha }}
+          path: |
+            build/protocol-gate.json
+            build/protocol-node.log
+            build/toolchain-provenance.json
+          if-no-files-found: warn
+
+      - name: Stop local QRL node
+        if: always()
+        run: |
+          if test -f build/protocol-node.pid; then
+            kill "$(< build/protocol-node.pid)" || true
+          fi

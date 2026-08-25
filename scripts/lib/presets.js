@@ -19,13 +19,14 @@
 
 const { spawnSync } = require('child_process');
 
+const abi = require('./abi64');
 const { HYPC_BIN, collectSources, compileSources } = require('../hypc');
-const { keccak256Hex } = require('./abi64');
 
 const VERIFIER_FILE = 'StarkVerifier.hyp';
 const GAS_METER_FILE = 'StarkVerifierGasMeter.hyp';
 const REGISTRY_FILE = 'StarkFactRegistry.hyp';
 const BRIDGE_FILE = 'bridge/StateBridge.hyp';
+const PROGRAM_ID_DOMAIN = new TextEncoder().encode('QSTARK-FIBONACCI-v1');
 
 const PRESET_KEYS = Object.freeze([
   'logBlowup',
@@ -123,6 +124,33 @@ function presetConfig(name) {
   return { ...entry.config };
 }
 
+// Every committed preset is a measurement profile. Its bit count is the
+// ethSTARK conjecture exposed by p3-fri and is recorded as an experimental
+// benchmark value. A production profile needs an accepted parameter set from
+// the soundness analysis in docs/SECURITY-STATUS.md.
+function presetSecurity(name) {
+  const config = presetConfig(name);
+  return {
+    profile: 'benchmark',
+    status: 'experimental',
+    conjecturedBits: config.logBlowup * config.numQueries + config.queryPowBits,
+    productionReady: false,
+  };
+}
+
+// Matches StarkVerifier.programIdentifier(): domain, public-value length and
+// all six compile-time preset constants under the 64-byte packed ABI.
+function programIdFor(name) {
+  const config = presetConfig(name);
+  return abi.keccak256Hex(
+    abi.concatBytes([
+      PROGRAM_ID_DOMAIN,
+      abi.encodeUint(24),
+      ...PRESET_KEYS.map((key) => abi.encodeUint(config[key])),
+    ])
+  );
+}
+
 // Preset name for a parameter set, or null for custom parameters.
 function presetFromConfig(config) {
   const entry = PRESETS.find((p) => sameConfig(p.config, config));
@@ -153,13 +181,6 @@ function presetFamily(name) {
   if (/^c[123]-binary$/.test(name)) return 'binary';
   if (/^c3-a\d-f\d$/.test(name)) return 'sweep';
   throw new Error(`unknown preset ${name}`);
-}
-
-// keccak256("fibonacci-<preset>-v1"): the fact-registry program id of a
-// verifier deployment (docs/BRIDGE.md).
-function programIdFor(preset) {
-  presetConfig(preset);
-  return keccak256Hex(new TextEncoder().encode(`fibonacci-${preset}-v1`));
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +326,7 @@ module.exports = {
   presetFromVector,
   presetKey,
   presetNames,
+  presetSecurity,
   presetSource,
   programIdFor,
   sameConfig,
