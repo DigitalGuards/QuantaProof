@@ -13,9 +13,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@600&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
     />
-    <link rel="stylesheet" href="/assets/css/site.css?v=20260825" />
+    <link rel="stylesheet" href="/assets/css/site.css?v=20260826" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -28,34 +28,26 @@
       </symbol>
     </svg>
 
-    <header class="site-header">
-      <div class="container header-inner">
-        <a class="brand" href="/" aria-label="QuantaStark home">
-          <svg class="mark" aria-hidden="true" focusable="false"><use href="#qs-mark" /></svg>
-          <span class="brand-name">Quanta<span>Stark</span></span>
+    <header class="masthead grid">
+      <div class="wide masthead-inner">
+        <a class="wordmark" href="/">
+          <svg aria-hidden="true" focusable="false"><use href="#qs-mark" /></svg>
+          QuantaStark
         </a>
-        <nav class="site-nav" aria-label="Primary">
-          <ul>
-            <li>
-              <a class="nav-cta" href="https://github.com/DigitalGuards/QuantaStark" rel="noopener"
-                >GitHub</a
-              >
-            </li>
-          </ul>
+        <nav class="site-nav" aria-label="Site">
+          <a href="https://github.com/DigitalGuards/QuantaStark" rel="noopener">GitHub</a>
         </nav>
       </div>
     </header>
 
-    <main id="main" class="error-page">
-      <div class="container">
-        <span class="error-code">404</span>
-        <h1>Page not found</h1>
-        <p>
-          There is nothing at this address. The site is a single page; everything else lives in the
-          repository.
-        </p>
-        <a class="btn btn-primary" href="/">Back to the front page</a>
-      </div>
+    <main id="main" class="error-page grid">
+      <p class="code">404</p>
+      <h1>Page not found</h1>
+      <p>
+        No page exists at this address. The site is a single page; everything else lives in the
+        repository.
+      </p>
+      <p><a href="/">Back to the front page</a></p>
     </main>
   </body>
 </html>

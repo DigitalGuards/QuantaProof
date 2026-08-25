@@ -2,9 +2,10 @@
 """Render the QuantaStark social card and the raster icons.
 
 Outputs (relative to site/): img/og-image.png (1200x630, the DigitalGuards
-family card: dark gradient, mark, wordmark, tagline, domain, ember bar),
-favicon.png (512x512) and apple-touch-icon.png (180x180). The mark is the
-same geometry as favicon.svg, drawn with Pillow so no SVG rasteriser is needed.
+family card: dark gradient, mark, wordmark, one tagline line, domain, ember
+bar), favicon.png (512x512) and apple-touch-icon.png (180x180). The mark is
+the same geometry as favicon.svg, drawn with Pillow so no SVG rasteriser is
+needed.
 
 Usage: python3 site/tools/og-image.py [--fonts DIR] [--out site]
 
@@ -20,7 +21,7 @@ import os
 import sys
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 # Obsidian & Ember tokens (site/assets/css/site.css).
 BG_TOP = (13, 11, 16)
@@ -109,16 +110,6 @@ def vertical_gradient(width, height):
     return Image.fromarray(pixels, 'RGB')
 
 
-def glow(base, centre, radius, colour, alpha):
-    """Soft radial glow composited over the base image."""
-    layer = Image.new('RGBA', base.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-    x, y = centre
-    draw.ellipse([x - radius, y - radius, x + radius, y + radius], fill=colour + (alpha,))
-    layer = layer.filter(ImageFilter.GaussianBlur(radius * 0.6))
-    return Image.alpha_composite(base.convert('RGBA'), layer)
-
-
 def draw_mark(draw, origin, size, ember=EMBER, star=CHAMPAGNE, scale=1):
     """The favicon geometry (64-unit box) at an origin and size, on an ImageDraw.
 
@@ -163,12 +154,6 @@ def render_mark_layer(canvas_size, origin, size, ember=EMBER, star=CHAMPAGNE, al
 def render_og(out_dir, dirs):
     width, height = 1200, 630
     image = vertical_gradient(width, height).convert('RGBA')
-    image = glow(image, (150, -40), 520, EMBER, 42)
-    image = glow(image, (1290, 700), 420, (74, 175, 255), 22)
-
-    # Faint watermark of the mark on the right, like the family cards.
-    watermark = render_mark_layer((width, height), (700, 20), 640, alpha=20)
-    image = Image.alpha_composite(image, watermark)
 
     mark = render_mark_layer((width, height), (76, 72), 128)
     image = Image.alpha_composite(image, mark)
@@ -178,18 +163,14 @@ def render_og(out_dir, dirs):
     max_width = width - 2 * margin
 
     wordmark = fit_font(lambda size: load_sans(dirs, size, 'Bold'), 104, 'QUANTASTARK', max_width)
-    draw.text((margin - 4, 214), 'QUANTASTARK', font=wordmark, fill=EMBER)
+    draw.text((margin - 4, 224), 'QUANTASTARK', font=wordmark, fill=EMBER)
 
-    lines = [
-        ('Post-quantum STARK verifier for QRL 2.0.', TEXT_PRIMARY),
-        ('Plonky3 proofs verified on the 512-bit QRVM, hash-based by construction.', TEXT_SECONDARY),
-    ]
-    longest = max((text for text, _ in lines), key=len)
-    tagline = fit_font(lambda size: load_sans(dirs, size, 'Regular'), 36, longest, max_width)
-    y = 372
-    for text, colour in lines:
-        draw.text((margin, y), text, font=tagline, fill=colour)
-        y += int(tagline.size * 1.35)
+    tagline_text = 'Post-quantum STARK verifier for QRL 2.0'
+    tagline = fit_font(lambda size: load_sans(dirs, size, 'Regular'), 40, tagline_text, max_width)
+    draw.text((margin, 392), tagline_text, font=tagline, fill=TEXT_PRIMARY)
+
+    status = load_mono(dirs, 24)
+    draw.text((margin, 458), 'Research project. Unaudited.', font=status, fill=TEXT_SECONDARY)
 
     domain = load_mono(dirs, 30)
     draw.text((margin, 536), 'quantastark.com', font=domain, fill=EMBER)

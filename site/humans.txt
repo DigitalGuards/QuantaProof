@@ -6,6 +6,6 @@ GitHub: https://github.com/DigitalGuards
 /* SITE */
 Last update: 2026-08-25
 Language: English
-Standards: HTML5, CSS3, vanilla JavaScript
-Components: none, no build step
+Standards: HTML5, CSS3
+Components: none, no build step, no JavaScript
 Source: https://github.com/DigitalGuards/QuantaStark (site/)
