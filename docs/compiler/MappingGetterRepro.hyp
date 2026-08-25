@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-3.0
+pragma hyperion >=0.0;
+
+/// Reproduction for the legacy code generator's public mapping getters
+/// (docs/compiler/HYPC-LEGACY-CODEGEN-DEFECTS.md). Every mapping has an
+/// explicit setter and an explicit view next to the auto-generated getter.
+contract MappingGetterRepro {
+    mapping(bytes32 => uint512) public byBytes32; // slot 0
+    mapping(address => uint512) public byAddress; // slot 1
+    mapping(uint512 => uint512) public byUint512; // slot 2
+    mapping(int256 => uint512) public byInt256; // slot 3
+
+    function setBytes32(bytes32 key, uint512 value) external {
+        byBytes32[key] = value;
+    }
+
+    function viewBytes32(bytes32 key) external view returns (uint512) {
+        return byBytes32[key];
+    }
+
+    function setAddress(address key, uint512 value) external {
+        byAddress[key] = value;
+    }
+
+    function viewAddress(address key) external view returns (uint512) {
+        return byAddress[key];
+    }
+
+    function setUint512(uint512 key, uint512 value) external {
+        byUint512[key] = value;
+    }
+
+    function viewUint512(uint512 key) external view returns (uint512) {
+        return byUint512[key];
+    }
+
+    function setInt256(int256 key, uint512 value) external {
+        byInt256[key] = value;
+    }
+
+    function viewInt256(int256 key) external view returns (uint512) {
+        return byInt256[key];
+    }
+}

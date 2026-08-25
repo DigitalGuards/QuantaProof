@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-3.0
+pragma hyperion >=0.0;
+
+/// Reproduction for the legacy code generator's argument order of the
+/// mldsa87verify builtin (docs/compiler/HYPC-LEGACY-CODEGEN-DEFECTS.md).
+///
+/// verifyBuiltin wraps the builtin. verifyRaw packs the same precompile frame
+/// by hand and sends it to precompile 0x03 with a plain staticcall, so the
+/// precompile itself can be checked independently of the builtin.
+contract MldsaVerifyRepro {
+    address internal constant MLDSA87_VERIFY = address(3);
+
+    function digestOf(bytes memory message) external pure returns (bytes64) {
+        return shake256(message);
+    }
+
+    function verifyBuiltin(
+        bytes64 digest,
+        bytes memory signature,
+        bytes memory publicKey,
+        bytes memory context
+    ) external pure returns (bool) {
+        return mldsa87verify(digest, signature, publicKey, context);
+    }
+
+    function verifyRaw(
+        bytes64 digest,
+        bytes memory signature,
+        bytes memory publicKey,
+        bytes memory context
+    ) external view returns (bool ok, bytes memory returnData) {
+        bytes memory frame = abi.encodePacked(
+            digest,
+            publicKey,
+            signature,
+            uint8(context.length),
+            context
+        );
+        (bool success, bytes memory out) = MLDSA87_VERIFY.staticcall(frame);
+        require(success, "precompile call failed");
+        ok = out.length == 64 && uint512(bytes64(out)) == 1;
+        returnData = out;
+    }
+}
