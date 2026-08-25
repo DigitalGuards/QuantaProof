@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+/// @title IStarkFactRegistry
+/// @notice Registry of verified proof facts consumed by the bridge (docs/BRIDGE.md).
+/// @dev A fact is keccak256(abi.encodePacked(verifier, programId, keccak256(publicValues)))
+///      and is set once a proof for those public values has been verified.
+interface IStarkFactRegistry {
+    function isValid(bytes32 fact) external view returns (bool);
+
+    function registerFact(bytes calldata proof, bytes calldata publicValues) external returns (bytes32);
+}

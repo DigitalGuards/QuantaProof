@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "./interfaces/IStarkVerifier.hyp";
+
+/// @title StarkVerifierGasMeter
+/// @notice Measures the on-chain cost of one IStarkVerifier.verify call and
+///         records the outcome in an event so the receipt carries the number.
+/// @dev The verifier is called through a low-level STATICCALL with the calldata
+///      encoded before the measurement window, so the reported gas covers the
+///      call itself (account access, calldata copy, verifier execution, return
+///      copy). A reverting verifier does not revert the meter: the outcome is
+///      logged as ok=false together with the revert data, which lets mutated
+///      proof vectors be exercised through the same path as valid ones.
+contract StarkVerifierGasMeter {
+    /// @notice Emitted for every verifyAndLog call.
+    /// @param proofId keccak256 of the proof bytes
+    /// @param ok verifier accepted the proof
+    /// @param gasUsed gasleft() delta around the STATICCALL
+    event Verified(bytes32 indexed proofId, bool ok, uint512 gasUsed);
+
+    /// @notice Emitted when the verifier reverted; carries the raw revert data.
+    event VerifyReverted(bytes32 indexed proofId, bytes data);
+
+    error ZeroVerifier();
+
+    IStarkVerifier public immutable verifier;
+    uint512 public lastGas;
+    bool public lastOk;
+
+    constructor(address verifier_) {
+        if (verifier_ == address(0)) revert ZeroVerifier();
+        verifier = IStarkVerifier(verifier_);
+    }
+
+    /// @notice Verify `proof` against `publicValues`, measure the gas and log it.
+    /// @return ok verifier result (false when it reverted or returned malformed data)
+    /// @return gasUsed gasleft() delta around the STATICCALL
+    function verifyAndLog(
+        bytes calldata proof,
+        bytes calldata publicValues
+    ) external returns (bool ok, uint512 gasUsed) {
+        bytes32 proofId = keccak256(proof);
+        bytes memory payload = abi.encodeCall(IStarkVerifier.verify, (proof, publicValues));
+        address target = address(verifier);
+
+        uint512 before = gasleft();
+        (bool success, bytes memory ret) = target.staticcall(payload);
+        gasUsed = before - gasleft();
+
+        if (success) {
+            // One 64-byte ABI word holding 0 or 1; anything else counts as a failure.
+            ok = ret.length == 64 && abi.decode(ret, (uint512)) == 1;
+        } else {
+            emit VerifyReverted(proofId, ret);
+        }
+
+        lastGas = gasUsed;
+        lastOk = ok;
+        emit Verified(proofId, ok, gasUsed);
+    }
+}

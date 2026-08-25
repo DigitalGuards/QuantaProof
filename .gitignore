@@ -1,0 +1,30 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+build/hyperion/
+prover/target/
+node_modules/
+test/vectors/large/
+
+# Local deployment records (tracked examples live next to them)
+/config/local-*.json
+!/config/local-*.example.json
+
+# Editor and agent state
+.claude/
+.vscode/
+.idea/
+*.swp
+
+# Local operating notes; never tracked (private infrastructure detail)
+CLAUDE.md
+docs/OPS.md
+
+# gqrl --dev data directory (scripts/dev-node.sh)
+build/dev-node/
+
+# Dev-node deployment record (seeded from config/dev-node.example.json)
+/config/dev-node.json

@@ -1,0 +1,49 @@
+# QuantaProof local 64-byte network: enclave qrl2-stark, chain 3151909,
+# execution RPC http://127.0.0.1:32102. Coexists with the QNS composition
+# (qrl2-qns, chain 3151908, ports 32000+). Images are built from pinned
+# sources by scripts/build-local-node-image.sh and build-local-qrysm-images.sh.
+participants:
+  - el_type: gqrl
+    el_image: qrl2-stark/go-qrl:stark
+    cl_type: qrysm
+    cl_image: qrl2-stark/qrysm:beacon-chain-64
+    use_separate_vc: true
+    vc_type: qrysm
+    vc_image: qrl2-stark/qrysm:validator-64
+    validator_count: 64
+    count: 1
+
+network_params:
+  network: kurtosis
+  network_id: '3151909'
+  withdrawal_address: 'Q00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'
+  seconds_per_slot: 6
+  slots_per_epoch: 8
+  genesis_delay: 30
+  # The package default (30M) is above the go-qrl consensus cap of 20M.
+  genesis_gaslimit: 20000000
+
+wait_for_finalization: false
+additional_services: []
+
+qrl_genesis_generator_params:
+  image: qrl2-stark/qrysm:qrl-genesis-generator-64
+
+port_publisher:
+  # P2P advertisement only. This does not bind Docker host ports.
+  nat_exit_ip: '127.0.0.1'
+  el:
+    enabled: true
+    public_port_start: 32100
+  cl:
+    enabled: false
+    public_port_start: 33100
+  vc:
+    enabled: false
+    public_port_start: 34100
+  remote_signer:
+    enabled: false
+    public_port_start: 35100
+  additional_services:
+    enabled: false
+    public_port_start: 36100

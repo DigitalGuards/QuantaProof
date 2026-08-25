@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "./interfaces/IStarkVerifier.hyp";
+
+/// @title StarkVerifier
+/// @notice Placeholder for the Plonky3 uni-stark verifier (Goldilocks, quadratic
+///         extension, two-adic FRI, keccak256 Merkle and Fiat-Shamir).
+/// @dev Milestone M1 stub: every verification reverts with NotImplemented() and
+///      PARAMS() reports zeros. The real implementation lands with the
+///      Goldilocks, Fp2, KeccakChallenger, MerkleMultiProof and FriVerifier
+///      libraries (milestones M2 to M6). The deployable surface (this
+///      interface, the parameter getter and the custom error) is final.
+contract StarkVerifier is IStarkVerifier {
+    /// @notice Raised while the verifier body is unimplemented.
+    error NotImplemented();
+
+    /// @notice FRI and soundness parameters this deployment verifies against.
+    /// @return logBlowup log2 of the LDE blowup factor
+    /// @return numQueries number of FRI queries
+    /// @return queryPowBits proof-of-work bits sampled before the queries
+    /// @return commitPowBits proof-of-work bits per FRI commit round
+    /// @return maxLogArity largest log2 folding arity per round
+    /// @return logFinalPolyLen log2 of the final polynomial length
+    function PARAMS()
+        external
+        pure
+        returns (
+            uint512 logBlowup,
+            uint512 numQueries,
+            uint512 queryPowBits,
+            uint512 commitPowBits,
+            uint512 maxLogArity,
+            uint512 logFinalPolyLen
+        )
+    {
+        return (0, 0, 0, 0, 0, 0);
+    }
+
+    /// @inheritdoc IStarkVerifier
+    function verify(bytes calldata, bytes calldata) external pure returns (bool) {
+        revert NotImplemented();
+    }
+}

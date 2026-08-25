@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+# The Hyperion compile and size gate (npm run compile, needs the 64-byte hypc
+# from the hyperion-stark worktree) and every chain-bound suite
+# (npm run test:contracts, deploy, verify:proof, gas:report, needs a gqrl dev
+# node or the Kurtosis composition) run locally: hosted runners have neither a
+# 64-byte hypc distribution nor a QRL 2.0 node. CI covers everything runnable
+# on a stock runner.
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  node:
+    name: Toolchain scripts and JS references (node:test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Contract suite skip path
+        run: npm run test:contracts
+        if: ${{ hashFiles('test/contracts/*.test.js') != '' }}
+
+      - name: Prose lint
+        run: npm run lint:prose
+
+      - name: Format check
+        run: npm run format:check
+
+  prover:
+    name: Rust prover (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: prover
+
+      - name: Format
+        run: cargo fmt --check --manifest-path prover/Cargo.toml
+        if: ${{ hashFiles('prover/Cargo.toml') != '' }}
+
+      - name: Clippy
+        run: cargo clippy --release --manifest-path prover/Cargo.toml --all-targets -- -D warnings
+        if: ${{ hashFiles('prover/Cargo.toml') != '' }}
+
+      - name: Test
+        run: cargo test --release --manifest-path prover/Cargo.toml
+        if: ${{ hashFiles('prover/Cargo.toml') != '' }}

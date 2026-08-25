@@ -1,0 +1,47 @@
+{
+  "name": "quantaproof",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Post-quantum STARK verifier for QRL 2.0: Plonky3-compatible proofs verified by Hyperion contracts on the 64-byte QRVM",
+  "license": "GPL-3.0",
+  "author": "DigitalGuards",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "compile": "node scripts/compile-hyperion.js && node scripts/check-code-size.js",
+    "size": "node scripts/check-code-size.js",
+    "test": "npm run compile && npm run test:unit && npm run lint:prose",
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:contracts": "node --test test/contracts/*.test.js",
+    "dev-node": "./scripts/dev-node.sh",
+    "build:local-network": "./scripts/build-local-node-image.sh && ./scripts/build-local-qrysm-images.sh",
+    "kurtosis:start": "./scripts/kurtosis-start.sh",
+    "deploy": "node scripts/deploy.js",
+    "verify:proof": "node scripts/verify-proof.js",
+    "gas:report": "node scripts/gas-report.js",
+    "lint:prose": "node scripts/lint-prose.js",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "prover:build": "cargo build --release --manifest-path prover/Cargo.toml",
+    "prover:vectors": "cargo run --release --manifest-path prover/Cargo.toml -- vectors --preset all --sizes 10,12 --out test/vectors"
+  },
+  "keywords": [
+    "qrl",
+    "stark",
+    "plonky3",
+    "post-quantum",
+    "hyperion",
+    "zero-knowledge",
+    "rollup"
+  ],
+  "dependencies": {
+    "@noble/hashes": "^1.8.0",
+    "@theqrl/wallet.js": "^6.2.4",
+    "@theqrl/web3": "^1.0.3",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2"
+  }
+}

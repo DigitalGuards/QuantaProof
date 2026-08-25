@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+/// @title IStarkVerifier
+/// @notice Minimal verifier surface shared by every QuantaProof STARK verifier.
+/// @dev `proof` is the packed calldata layout described in docs/PROTOCOL.md
+///      (8-byte little-endian Goldilocks elements, 32-byte digests).
+///      `publicValues` holds the AIR's public inputs in the same element encoding.
+///      Implementations revert with a custom error on malformed input and
+///      return false only for a well-formed proof that fails a check.
+interface IStarkVerifier {
+    function verify(bytes calldata proof, bytes calldata publicValues) external view returns (bool);
+}

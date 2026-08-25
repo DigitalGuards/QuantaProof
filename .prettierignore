@@ -1,0 +1,5 @@
+# Generated artifacts and lockfiles (build/, node_modules/ and prover/target/ are covered by .gitignore)
+package-lock.json
+prover/Cargo.lock
+test/vectors/
+docs/GAS-REPORT.md
