@@ -364,9 +364,9 @@ siblings); round 2 (arity 2) 31534..32848 (24 siblings); total 32848 bytes.
 5. Only then does verification start (section 12).
 
 With `commit_proof_of_work_bits = 0` the `commit_pow_witness[r]` bytes are encoded (they are part
-of `Proof`) but never observed; the verifier accepts any canonical value there, so `proofId` is
-malleable in those 8 R bytes. Fact registries must therefore key facts by the public values (the
-plan does), never by `proofId` alone.
+of `Proof`) and stay unobserved; the verifier accepts any canonical value there, so `proofId` is
+malleable in those 8 R bytes. Fact registries must therefore key facts by the public values, as
+the plan does; a key built from `proofId` alone would inherit that malleability.
 
 ## 12. Verifier check order and errors
 
@@ -442,7 +442,7 @@ parameters, `proofHex`, `publicValuesHex`, `proofLength` and
   `fold_row` coset start uses the folded index and folded height (`s = g_{h+k}^rev(group, h)`).
 - Check order: the plan listed the constraint identity as the last step (after `pcs.verify`,
   as upstream does). The contract moves it directly after the opened values are absorbed
-  (section 12, step 3). This changes no accept/reject decision, only which error fires first;
+  (section 12, step 3). This changes which error fires first and leaves every accept/reject decision unchanged;
   it lets the verifier fail fast and makes `OodMismatch` reachable by mutation.
 - Upstream verifies both input batches before computing any reduced opening and runs every fold
   chain before any per-round Merkle check; the contract keeps that order (section 12, steps 5 to 8).

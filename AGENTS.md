@@ -107,8 +107,8 @@ QRL 2.0 node.
 | `STARK_RPC_URL`                                                                                        | contract tests, loadDeployer             | Execution RPC for chain-bound suites. Unset means the suites skip.                                                                                                                      |
 | `STARK_CONFIG`                                                                                         | deploy, verify:proof, gas:report         | Deployment record (default `config/local-stark.json`; `config/dev-node.json` for the dev node). Seeded from the `.example.json` when missing.                                           |
 | `STARK_DEPLOY_BRIDGE`                                                                                  | deploy                                   | `1` deploys `StarkFactRegistry` and `StateBridge` (IR pipeline) bound to the c3 verifier of the run, or to the first deployed preset; same as `--bridge`.                               |
-| `STARK_PUBLIC_DEV_ACCOUNT`                                                                             | loadDeployer                             | Index of a published Kurtosis fixture account. Loopback RPC and chain 3151909 only; command-scoped, never in `.env`.                                                                    |
-| `TESTNET_SEED`                                                                                         | loadDeployer                             | 34-word ML-DSA-87 mnemonic or 102-hex extended seed for other networks. `.env` only, never tracked.                                                                                     |
+| `STARK_PUBLIC_DEV_ACCOUNT`                                                                             | loadDeployer                             | Index of a published Kurtosis fixture account. Loopback RPC and chain 3151909 only; command-scoped and kept out of `.env`.                                                              |
+| `TESTNET_SEED`                                                                                         | loadDeployer                             | 34-word ML-DSA-87 mnemonic or 102-hex extended seed for other networks. Lives in the ignored `.env` only.                                                                               |
 | `STARK_VECTORS_LARGE`                                                                                  | unit suites, `test/lib/vectors.js`       | `1` adds `test/vectors/large/` to the vector set of the unit and contract suites. `gas:report` includes that directory whenever it exists (`--skip-large` excludes it).                 |
 | `STARK_SKIP_MUTATIONS`, `STARK_STARK_VECTORS`                                                          | `test/contracts/stark.test.js`           | `1` limits the verifier suite to its gas rows; a comma-separated list restricts the valid vectors.                                                                                      |
 | `QRL_PACKAGE_DIR`                                                                                      | loadDeployer, kurtosis-start             | Sibling `qrl-package` checkout (default `../qrl-package`).                                                                                                                              |
@@ -124,8 +124,10 @@ QRL 2.0 node.
 
 - Never write a Unicode em dash (U+2014) anywhere: code, comments, docs,
   commit messages, pull requests. `npm run lint:prose` fails on one.
-- No contrastive negation in prose ("X, not Y" / "not X, but Y"). State what
-  something is. The prose lint warns on the common patterns.
+- No contrastive negation in prose: state what something is, and when a
+  distinction matters give the contrast its own full sentence. The prose lint
+  warns on the common corrective shapes (comma-not, not-but, rather-than,
+  instead-of, comma-never, no-only).
 - Prettier formats JS, JSON, YAML and Markdown (`npm run format`). Rust uses
   `cargo fmt`. Hyperion sources follow the layout of the existing files.
   `docs/GAS-REPORT.md` is generated and excluded from Prettier.

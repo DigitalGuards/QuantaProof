@@ -21,7 +21,7 @@
 // `verify`, then the `verifyAndLog` transaction of the preset's gas meter).
 // Proofs whose transaction exceeds the node's transaction-pool size cap
 // (128 KiB, txMaxSize in core/txpool/legacypool) are simulated with a
-// qrl_call of `verifyAndLog` instead: the inner gas is exact, the receipt
+// qrl_call of `verifyAndLog`: the inner gas is exact, the receipt
 // number is replaced by the meter's qrl_estimateGas and the cell is marked.
 //
 // Measurements are kept per optimizer setting in <store>/<label>.json, where
@@ -443,7 +443,7 @@ function simulatedNote(rows) {
   if (simulated.length === 0) return [];
   return [
     `\\* Transaction above the node's ${fmt(TX_POOL_MAX_BYTES)}-byte transaction-pool cap ` +
-      '(`txMaxSize` in `core/txpool/legacypool`, a pool constant, no consensus rule); the cell ' +
+      '(`txMaxSize` in `core/txpool/legacypool`, a pool constant outside the consensus rules); the cell ' +
       'shows `qrl_estimateGas` of `verifyAndLog` and the inner gas of a `qrl_call` of the same ' +
       `function. Cells: ${simulated.map((r) => `\`${r.vector}\``).join(', ')}.`,
     '',
@@ -623,8 +623,8 @@ function renderReport({ stores, primaryLabel, environment, skipped, failures, ve
     if (simulated.length > 0) {
       push(
         `- ${simulated.length} cells could not be sent as a transaction: their calldata exceeds the ` +
-          `${fmt(TX_POOL_MAX_BYTES)}-byte transaction-pool cap of the execution client (a pool constant, ` +
-          'no consensus rule). Their gas is measured through `qrl_estimateGas` and `qrl_call` and marked ' +
+          `${fmt(TX_POOL_MAX_BYTES)}-byte transaction-pool cap of the execution client (a pool constant ` +
+          'outside the consensus rules). Their gas is measured through `qrl_estimateGas` and `qrl_call` and marked ' +
           '`\\*`; a rollup that needs such proofs must raise the pool cap on its sequencer nodes or split ' +
           'the proof across transactions (`docs/STAGED-VERIFICATION.md`).'
       );

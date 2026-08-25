@@ -66,7 +66,7 @@ function publicKeyHash(publicKey) {
 }
 
 // Sign a 64-byte digest with the context string. Deterministic signing keeps
-// vectors reproducible; the precompile accepts hedged signatures just the same.
+// vectors reproducible; the precompile accepts hedged signatures as well.
 function signDigest(digest, secretKey, context = WITHDRAW_CONTEXT, options = {}) {
   const digestBytes = toBytes(digest);
   if (digestBytes.length !== DIGEST_BYTES) {

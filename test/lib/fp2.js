@@ -6,7 +6,7 @@
 // batchInverse is the norm-based Montgomery trick the contract runs over a
 // memory array, written the same way (norms, forward prefix products, one
 // inversion, backward pass) so an implementation mistake shows up as a
-// mismatch rather than agreement.
+// mismatch.
 
 const G = require('./goldilocks');
 

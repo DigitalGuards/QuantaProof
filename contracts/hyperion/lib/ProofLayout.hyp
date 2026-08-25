@@ -13,7 +13,7 @@ pragma hyperion >=0.0;
 ///      offset checked against `length` before the read, because
 ///      `calldataload` past the end zero-pads) and stores absolute calldata
 ///      offsets so the verifier can address every field without adding the
-///      proof base again. Field elements are not decoded here; the verifier
+///      proof base again. Field element decoding is left to the verifier, which
 ///      runs the canonical scan over every element region after `parse`
 ///      (docs/PROTOCOL.md section 11.3 step 4). Per-round records live in a
 ///      memory array of `ROUND_WORDS` words each: log arity, sibling values

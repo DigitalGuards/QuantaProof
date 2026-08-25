@@ -115,7 +115,8 @@ Facts about this mode, verified in the client source and on the running node
   (SHAKE256) the withdrawal digests; the stubs `0x01` to `0x06` are
   pre-allocated in the developer genesis;
 - the transaction fee is capped at 1 quanta per transaction, so the scripts
-  send with the estimate plus 20 percent instead of a blanket gas limit;
+  send with the estimate plus 20 percent (a blanket gas limit would push the
+  fee over the cap);
 - the transaction pool rejects any transaction above 131,072 bytes with
   `oversized data` (`txMaxSize` in `core/txpool/legacypool`, a pool constant
   without a command-line knob). Proofs above about 123 KB therefore cannot be
@@ -229,7 +230,7 @@ For a dedicated local daemon, make new bridge networks bind on loopback in
 
 Confirm with `docker ps --format 'table {{.Names}}\t{{.Ports}}'` and `ss -ltnp`
 that every published address is `127.0.0.1`. The start script's probe automates
-the check but the URL in the deployment record is never evidence of the bind
+the check. The URL in the deployment record says nothing about the bind
 scope.
 
 Finding from the 2026-08-25 run: the daemon default does reach the enclave

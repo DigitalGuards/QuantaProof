@@ -6,7 +6,7 @@
 // with a 64-byte-word ABI encoder/decoder that covers what harnesses use:
 // uint<N>, bool, bytes<N>, bytes and dynamic uint<N>[] / bool[] arrays.
 // scripts/lib/abi64.js only knows the toolchain's `bytes` arguments, so the
-// array and static-argument encoding lives here rather than in scripts/.
+// array and static-argument encoding lives here.
 //
 // Usage:
 //   const { connect, deployHarness, expectRevert } = require('../lib/harness');
@@ -275,8 +275,8 @@ async function connect(options = {}) {
 // Optimizer settings shared with scripts/compile-hyperion.js: HYPERION_OPTIMIZE_RUNS
 // (default 200) and HYPERION_VIA_IR=1. The runs value matters for gas: below a
 // few thousand runs the optimizer materializes wide literals (lane masks,
-// packed tables) through CODECOPY instead of a PUSH, which costs about 30 gas
-// per use; docs/GAS-PRIMITIVES.md reports both settings.
+// packed tables) through CODECOPY, which costs about 30 gas per use, and
+// inlines them as PUSH above that; docs/GAS-PRIMITIVES.md reports both settings.
 function optimizerOptions(env = process.env) {
   return {
     optimizerRuns: Number(env.HYPERION_OPTIMIZE_RUNS || 200),

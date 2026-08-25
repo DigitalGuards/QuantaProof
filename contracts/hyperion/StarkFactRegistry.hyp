@@ -7,7 +7,7 @@ import "./interfaces/IStarkFactRegistry.hyp";
 /// @title StarkFactRegistry
 /// @notice Records which public values have been proven under one verifier
 ///         deployment so that consumers (docs/BRIDGE.md: StateBridge) can check
-///         a fact with one storage read instead of re-running the verifier.
+///         a fact with one storage read; the verifier runs once per statement.
 /// @dev A fact is keyed by the public values only:
 ///          fact = keccak256(abi.encodePacked(address(verifier), programId, keccak256(publicValues)))
 ///      The proof bytes never enter the key. A proof carries unobserved witness

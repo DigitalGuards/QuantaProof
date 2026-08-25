@@ -34,7 +34,7 @@ pragma hyperion >=0.0;
 ///      the arities and the query witness (`32 + 16 * 2^lf + 8 R + 8` bytes,
 ///      608 for `lf = 5, R = 7`), so 8 KB leaves room for any parameter set the
 ///      verifier accepts; an observe that would exceed it reverts with
-///      `ChallengerOverflow()` rather than write outside the allocation. The
+///      `ChallengerOverflow()`, so no store lands outside the allocation. The
 ///      word-sized stores (`mstore` moves 64 bytes) may spill past `len` into
 ///      the slack; the spill is never hashed because keccak reads exactly `len`
 ///      bytes, and the next observe overwrites it.
@@ -218,7 +218,7 @@ library KeccakChallenger {
         c1 = sampleField(s);
     }
 
-    /// @notice The low `bits` bits of one full u64 group (bits < 64, never rejects).
+    /// @notice The low `bits` bits of one full u64 group (bits < 64; no rejection sampling).
     /// @dev Plonky3 asserts `2^bits < p`; `bits >= 64` is rejected here.
     function sampleBits(State memory s, uint512 bits) internal pure returns (uint512 v) {
         if (bits >= 64) revert SampleBitsOutOfRange();

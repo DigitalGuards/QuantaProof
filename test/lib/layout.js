@@ -272,7 +272,7 @@ function decodeProof(bytes, cfg) {
   };
 }
 
-// decodeProof that reports the error name instead of throwing.
+// Non-throwing decodeProof: a LayoutError comes back as { ok: false, error }.
 function tryDecodeProof(bytes, cfg) {
   try {
     return { ok: true, proof: decodeProof(bytes, cfg) };

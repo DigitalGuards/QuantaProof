@@ -184,7 +184,7 @@ class Challenger {
     return [c0, c1];
   }
 
-  // One full u64 group masked to its low `bits` bits; never rejects.
+  // One full u64 group masked to its low `bits` bits; no rejection sampling.
   sampleBits(bits, label = 'bits') {
     if (!Number.isInteger(bits) || bits < 0 || bits >= 64 || 1n << BigInt(bits) >= P) {
       throw new RangeError(`sample_bits: unsupported bit count ${bits}`);

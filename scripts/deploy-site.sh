@@ -83,7 +83,7 @@ if [ -e "$webroot" ]; then
     n=$((n + 1))
     previous="$webroot.previous-$stamp-$n"
   done
-  # -T: a name collision fails instead of nesting one tree inside the other.
+  # -T: a name collision fails; without it mv would nest one tree inside the other.
   run mv -T "$webroot" "$previous"
 fi
 run mv -T "$incoming" "$webroot"

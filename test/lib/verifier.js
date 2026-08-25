@@ -256,8 +256,8 @@ function verifyDecoded(cfg, proof, publicValues) {
   };
 }
 
-// Decode and verify; never throws for malformed input, only for internal
-// invariant violations.
+// Decode and verify. Malformed input comes back as { ok: false, error };
+// a throw signals an internal invariant violation.
 function verifyProof(cfg, proofBytes, publicValuesBytes) {
   try {
     const proof = layout.decodeProof(proofBytes, cfg);

@@ -94,7 +94,7 @@ settings are 2 to 6 percent cheaper (`docs/VERIFIER.md` section 5.1).
 | c3 n = 12 |      43,440 |      694,372 | 2,104,922 | 2,184,393 | 1,446,642 |                    31.8 % |
 | c3-binary |      69,810 |    1,114,196 | 3,167,190 | 3,324,433 | 2,122,236 |                    33.5 % |
 
-`c3-binary` is c3 at `n = 12` with arity 2 (nine rounds instead of three): arity 8
+`c3-binary` is c3 at `n = 12` with arity 2 (nine rounds where c3 has three): arity 8
 folding is cheaper on chain in both bytes and compute, so the arity sweep settled
 on `max_log_arity 3` (the arity 16 cells are larger because each query carries 15
 sibling values per round).
@@ -236,11 +236,12 @@ figure.
 
 The plan's original `sizes` formula (`2,500 * Q * R` compute per query-round)
 underestimates the measured n = 20 cell by 47 percent (2.81M against 4.14M) because
-an arity-8 round costs 6,324 gas instead of 2,500 and the Merkle walks cost 315 gas
-per hash instead of 130; its byte counts are within 10 percent. Use the phase model
+an arity-8 round costs 6,324 gas where the formula assumed 2,500 and the Merkle
+walks cost 315 gas per hash where it assumed 130; its byte counts are within 10
+percent. Use the phase model
 above for cells no vector or receipt covers.
 
-## 3. Rollup versus validium on QRL
+## 3. Rollup or validium on QRL
 
 ### 3.1 The data availability unit
 
@@ -342,8 +343,8 @@ available. On QRL the attestation is expensive because every committee signature
 is ML-DSA-87: 125,000 gas for the precompile plus 7,219 bytes of key and signature
 in calldata (about 115,500 gas) plus framing, about 245k gas per signature; a
 5-of-7 threshold verified on chain is about 1.22M gas per batch, the price of
-76 KB of calldata (4,760 transfers). The committee could instead sign with a
-hash-based scheme and have the STARK verify the attestation in circuit, which
+76 KB of calldata (4,760 transfers). An alternative has the committee sign with
+a hash-based scheme and the STARK verify the attestation in circuit, which
 removes the L1 cost and makes the committee part of the proven statement.
 
 Trust assumptions of the validium: the committee can withhold data, which freezes
@@ -383,8 +384,8 @@ bounds on single-machine proving of a width-2 trace. The shape for a payment AIR
 - Memory: a 2^20 trace of 300 columns at blowup 8 is `2^23 * 300 * 8` bytes, about
   20 GB of extended trace before the Merkle trees; at 2^24 it is 320 GB. Single
   proofs above 2^20 to 2^22 with c3 need a large machine or a lower blowup; this
-  pushes the design towards many 2^18 to 2^20 batch proofs plus recursion instead
-  of one huge proof.
+  rules out one huge proof and pushes the design towards many 2^18 to 2^20
+  batch proofs plus recursion.
 - Time: multi-threaded Plonky3 provers on a workstation prove keccak-heavy 2^20
   traces in seconds to tens of seconds (cited, Polygon's Plonky3 benchmarks; the
   figures move with hardware and release); expect minutes per batch proof of a
@@ -426,7 +427,7 @@ Verifying a keccak-committed STARK inside another STARK is expensive because
 keccak256 is expensive in arithmetic circuits: a Keccak-f[1600] permutation costs
 24 rows of an AIR with about 2,600 columns in Plonky3's keccak AIR (cited, Plonky3
 repository), and a c3 n = 20 proof needs 3,135 hashes plus the transcript flushes,
-about 200M trace cells just for the hashing. Poseidon2 (cited, ePrint 2023/323) over
+about 200M trace cells for the hashing alone. Poseidon2 (cited, ePrint 2023/323) over
 Goldilocks costs one row of a few hundred columns per permutation, about 200 times
 less. On the QRVM the ratio is reversed: a keccak compression costs 36 gas and a
 Poseidon2 permutation would cost tens of thousands of gas (roughly 340 S-box
@@ -435,7 +436,7 @@ per permutation). Hence two layers:
 
 | Layer            | Field / hash                                      | Verified by                                   | Proof shape                                                                          |
 | ---------------- | ------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Batch proofs     | Goldilocks, Poseidon2 Merkle trees and challenger | the aggregation AIR (in circuit)              | any size; never touch L1                                                             |
+| Batch proofs     | Goldilocks, Poseidon2 Merkle trees and challenger | the aggregation AIR (in circuit)              | any size; stay off L1                                                                |
 | Aggregation tree | Goldilocks, Poseidon2                             | the next aggregation layer or the final layer | k proofs in, 1 out; repeat until one proof covers the desired span of batches        |
 | Final proof      | Goldilocks, keccak256 Merkle and challenger       | `StarkVerifier` on QRL                        | one AIR whose statement is "I verified one Poseidon2 aggregation proof"; c3, n <= 20 |
 
@@ -443,16 +444,18 @@ What the on-chain verifier reuses unchanged: `Goldilocks.hyp`, `Fp2.hyp`,
 `KeccakChallenger.hyp`, `MerkleMultiProof.hyp`, `FriVerifier.hyp` and the transcript
 flow of `StarkVerifierCore`. What changes:
 
-- `ProofLayout.hyp`: a wider trace (hundreds of columns instead of 2, so the
-  opened rows and the leaf preimages grow), several quotient chunks (the
+- `ProofLayout.hyp`: a wider trace (hundreds of columns where the Fibonacci AIR
+  has 2, so the opened rows and the leaf preimages grow), several quotient
+  chunks (the
   aggregation AIR's constraint degree is above 2, so the quotient is committed in
   `2^ceil(log2(degree - 1))` chunks) and, if the AIR uses lookups, one more
   commitment round with its own challenges before the quotient. The layout carries
   a version byte for this.
 - `air/FibonacciAir.hyp` is replaced by the aggregation AIR's constraint
   evaluator at `zeta`: pure polynomial evaluation of the Poseidon2 round function
-  and the FRI-fold algebra at one point, no hashing on chain. Its cost scales with
-  the number of constraint terms (about 100 gas per extension multiplication):
+  and the FRI-fold algebra at one point, so nothing is hashed on chain. Its cost
+  scales with the number of constraint terms (about 100 gas per extension
+  multiplication):
   estimate 0.5 to 1.5M gas.
 - The opened values of a width-`w` trace add `2 * w * 16` bytes of calldata and
   their observation into the transcript: about 16 KB and 0.3M gas at `w = 500`.
@@ -523,8 +526,8 @@ exactly this family: "Hash-Based Multi-Signatures for Post-Quantum Ethereum"
 instantiations and parameter tables at a stated security level, and LeanSig
 (cited, ePrint 2025/1332) adds an incomparable encoding that lowers verification
 hashing for a given signature size. Those parameter tables are the starting
-point; the L2 does not need the aggregation features, only the single-signature
-verification cost and the key lifetime.
+point; the L2 takes only the single-signature verification cost and the key
+lifetime from them and leaves the aggregation features unused.
 
 Properties that matter for an L2 account scheme:
 
@@ -547,7 +550,8 @@ Properties that matter for an L2 account scheme:
 
 ### 5.3 Account abstraction with key rotation
 
-L2 accounts carry `(scheme_id, key_commitment, next_index)` instead of a raw key.
+L2 accounts carry `(scheme_id, key_commitment, next_index)`; the leaf names its
+scheme and commits to its key.
 The state transition dispatches on `scheme_id`; rotation is an L2 transaction
 signed by the current key that installs a new commitment (a new hash-based tree,
 a different parameter set, or later an ML-DSA-87 key once that is affordable).
@@ -676,8 +680,8 @@ transaction.
 SP1 Turbo used the BabyBear field, Poseidon2 hashing and Plonky3's FRI-based
 STARKs, with conjectured 100-bit security under proximity-gap conjectures; SP1
 Hypercube moved to the KoalaBear field and a multilinear "jagged" polynomial
-commitment with proximity-gap theorems instead of conjectures (cited, SP1 security
-model). SP1's proof types are core (size proportional to execution), compressed
+commitment whose security rests on proven proximity-gap theorems (cited, SP1
+security model). SP1's proof types are core (size proportional to execution), compressed
 (constant-size STARK, recursively verifiable inside SP1), and Groth16 or PLONK
 wrappers over BN254 for the EVM, about 260 bytes at about 270k gas and 868 bytes at
 about 300k gas respectively (cited, SP1 proof types). OpenVM uses BabyBear with a
@@ -724,7 +728,8 @@ library assumes one height per commitment today), one permutation commitment
 round with its challenges, and one constraint evaluator per AIR: about 0.4 to
 0.5M gas and 15 to 20 KB per extra commitment at n = 20, so a four-AIR machine
 lands near 6 to 7M gas per final proof (estimate). Costs: cryptographic design and
-audit of a bespoke machine, no general programmability. Benefits: every cell of
+audit of a bespoke machine, and the absence of general programmability.
+Benefits: every cell of
 the trace does payment work, the recursion stays in Goldilocks and reuses the
 verifier as is, and the proof shape stays within what this repository verifies.
 

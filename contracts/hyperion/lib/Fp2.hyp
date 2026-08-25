@@ -140,9 +140,10 @@ library Fp2 {
     /// @notice Invert `count` elements in place at memory `ptr` (128 bytes each,
     ///         c0 then c1) with one base field inversion.
     /// @dev 1 / a = conj(a) / norm(a) and the norm is a base field element, so
-    ///      Montgomery's trick runs over the norms in the base field (one
-    ///      mulmod per element in each pass) instead of over the extension
-    ///      elements (an extension product costs about five times more). Per
+    ///      Montgomery's trick runs over the norms in the base field, one
+    ///      mulmod per element in each pass; the same trick over the extension
+    ///      elements would pay an extension product per step, about five
+    ///      times more. Per
     ///      element: one norm, three base mulmod for the prefix products and
     ///      the shared inverse, two mulmod to scale the conjugate. Norms and
     ///      prefix products go to fresh memory taken from the free memory

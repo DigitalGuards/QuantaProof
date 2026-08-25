@@ -53,7 +53,7 @@ Verifier runtime bytes per setting (range over the deployed presets; the cap is 
 | fib_c3_n16 | 16 | 71,494 | 1,141,748 | 3,154,036 | 3,277,044 | 2,083,772 | 2,046,924 | +54.1 % |
 | fib_c3_n20 | 20 | 105,873 | 1,689,992 | 4,282,899 | 4,463,257 | 2,710,754 | 2,811,858 | +52.3 % |
 
-\* Transaction above the node's 131,072-byte transaction-pool cap (`txMaxSize` in `core/txpool/legacypool`, a pool constant, no consensus rule); the cell shows `qrl_estimateGas` of `verifyAndLog` and the inner gas of a `qrl_call` of the same function. Cells: `fib_c1_n16`, `fib_c1_n20`, `fib_c2_n20`.
+\* Transaction above the node's 131,072-byte transaction-pool cap (`txMaxSize` in `core/txpool/legacypool`, a pool constant outside the consensus rules); the cell shows `qrl_estimateGas` of `verifyAndLog` and the inner gas of a `qrl_call` of the same function. Cells: `fib_c1_n16`, `fib_c1_n20`, `fib_c2_n20`.
 
 ## Binary folding (c1-binary, c2-binary, c3-binary) (runs200)
 
@@ -72,7 +72,7 @@ Verifier runtime bytes per setting (range over the deployed presets; the cap is 
 | fib_c3-binary_n16 | 16 | 128,862 | 2,056,072 | 5,139,530 | 5,360,741\* | 3,234,185 | 3,983,072 | +29.0 % |
 | fib_c3-binary_n20 | 20 | 202,602 | 3,232,588 | 7,478,664 | 7,844,568\* | 4,512,512 | 5,825,962 | +28.4 % |
 
-\* Transaction above the node's 131,072-byte transaction-pool cap (`txMaxSize` in `core/txpool/legacypool`, a pool constant, no consensus rule); the cell shows `qrl_estimateGas` of `verifyAndLog` and the inner gas of a `qrl_call` of the same function. Cells: `fib_c1-binary_n16`, `fib_c1-binary_n20`, `fib_c2-binary_n16`, `fib_c2-binary_n20`, `fib_c3-binary_n16`, `fib_c3-binary_n20`.
+\* Transaction above the node's 131,072-byte transaction-pool cap (`txMaxSize` in `core/txpool/legacypool`, a pool constant outside the consensus rules); the cell shows `qrl_estimateGas` of `verifyAndLog` and the inner gas of a `qrl_call` of the same function. Cells: `fib_c1-binary_n16`, `fib_c1-binary_n20`, `fib_c2-binary_n16`, `fib_c2-binary_n20`, `fib_c3-binary_n16`, `fib_c3-binary_n20`.
 
 ## c3 arity and final-polynomial sweep (runs200)
 
@@ -153,7 +153,7 @@ materialises the wide lane masks and packed tables with `PUSH` or `CODECOPY`
 | fib_c3-a4-f5_n10 | 1,773,621 / 1,834,056 / 1,277,858 | 1,720,369 / 1,780,700 / 1,224,594 | 1,758,269 / 1,780,660 / 1,221,532 |
 | fib_c3-a4-f5_n12 | 2,143,486 / 2,222,479 / 1,490,524 | 2,080,135 / 2,159,024 / 1,427,161 | 2,121,786 / 2,151,544 / 1,414,992 |
 
-\* Transaction above the node's 131,072-byte transaction-pool cap (`txMaxSize` in `core/txpool/legacypool`, a pool constant, no consensus rule); the cell shows `qrl_estimateGas` of `verifyAndLog` and the inner gas of a `qrl_call` of the same function. Cells: `fib_c1_n16`, `fib_c1_n20`, `fib_c2_n20`, `fib_c1-binary_n16`, `fib_c1-binary_n20`, `fib_c2-binary_n16`, `fib_c2-binary_n20`, `fib_c3-binary_n16`, `fib_c3-binary_n20`.
+\* Transaction above the node's 131,072-byte transaction-pool cap (`txMaxSize` in `core/txpool/legacypool`, a pool constant outside the consensus rules); the cell shows `qrl_estimateGas` of `verifyAndLog` and the inner gas of a `qrl_call` of the same function. Cells: `fib_c1_n16`, `fib_c1_n20`, `fib_c2_n20`, `fib_c1-binary_n16`, `fib_c1-binary_n20`, `fib_c2-binary_n16`, `fib_c2-binary_n20`, `fib_c3-binary_n16`, `fib_c3-binary_n20`.
 
 Change of `gasUsed` relative to runs200 for the c3 cells:
 
@@ -168,7 +168,7 @@ Change of `gasUsed` relative to runs200 for the c3 cells:
 
 - Cheapest cell: `fib_c3-a3-f5_n10` at 1,681,890 gas (1,159,387 inner). Most expensive: `fib_c1-binary_n20` at 17,065,391 gas (10,687,663 inner), 85.3 % of the 20,000,000 block cap.
 - 40 of 44 cells are at or below the 8,000,000 target; above it: `fib_c1_n20` (10,534,049), `fib_c1-binary_n16` (10,983,536), `fib_c1-binary_n20` (17,065,391), `fib_c2-binary_n20` (10,047,619).
-- 9 cells could not be sent as a transaction: their calldata exceeds the 131,072-byte transaction-pool cap of the execution client (a pool constant, no consensus rule). Their gas is measured through `qrl_estimateGas` and `qrl_call` and marked `\*`; a rollup that needs such proofs must raise the pool cap on its sequencer nodes or split the proof across transactions (`docs/STAGED-VERIFICATION.md`).
+- 9 cells could not be sent as a transaction: their calldata exceeds the 131,072-byte transaction-pool cap of the execution client (a pool constant outside the consensus rules). Their gas is measured through `qrl_estimateGas` and `qrl_call` and marked `\*`; a rollup that needs such proofs must raise the pool cap on its sequencer nodes or split the proof across transactions (`docs/STAGED-VERIFICATION.md`).
 - Model deviation (estimateGas against the formula): +26.4 % to +84.0 %, mean +49.1 %. The formula counts every calldata byte at 16 gas (zero bytes cost 4) and its compute term is a coarse per-query, per-round budget; the phase table below is what the verifier spends.
 - Calldata is 20 to 43 % of a verification transaction and is fixed by the proof layout; the rest is execution.
 

@@ -1,10 +1,11 @@
 // Prose lint for the workspace style rules.
 //
 // Errors (exit 1): any U+2014 em dash in a tracked or untracked-but-not-ignored
-// text file. Warnings (exit 0): the contrastive-negation patterns ", not " and
-// "not ..., but", which also match legitimate sentences and therefore only get
-// reported. Usage: npm run lint:prose [-- --strict] (--strict turns warnings
-// into errors).
+// text file. Warnings (exit 0): the contrastive-negation shapes listed in
+// WARNING_PATTERNS (kinds comma-not, not-but, rather-than, instead-of,
+// comma-never and no-only), which also match legitimate sentences and therefore
+// only get reported. Usage: npm run lint:prose [-- --strict] (--strict turns
+// warnings into errors).
 
 const fs = require('fs');
 const path = require('path');
@@ -41,6 +42,24 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const EM_DASH = '\u2014';
 const COMMA_NOT = /, not /;
 const NOT_BUT = /\bnot\b[^.\n]*, but\b/i;
+const RATHER_THAN = /\brather than\b/i;
+const INSTEAD_OF = /\binstead of\b/i;
+const COMMA_NEVER = /, never /;
+const NO_ONLY = /\bno \w+, only\b/i;
+
+// One warning per line per kind; the label names the shape the pattern looks for.
+const WARNING_PATTERNS = [
+  { kind: 'comma-not', regex: COMMA_NOT, label: 'possible contrastive negation ", not "' },
+  { kind: 'not-but', regex: NOT_BUT, label: 'possible contrastive negation "not ..., but"' },
+  {
+    kind: 'rather-than',
+    regex: RATHER_THAN,
+    label: 'possible contrastive negation " rather than "',
+  },
+  { kind: 'instead-of', regex: INSTEAD_OF, label: 'possible contrastive negation " instead of "' },
+  { kind: 'comma-never', regex: COMMA_NEVER, label: 'possible contrastive negation ", never "' },
+  { kind: 'no-only', regex: NO_ONLY, label: 'possible contrastive negation "no X, only Y"' },
+];
 
 function listFiles(root = repoRoot) {
   const out = execFileSync(
@@ -66,23 +85,16 @@ function scanText(text) {
       findings.push({ line: index + 1, column: column + 1, kind: 'em-dash', text: line.trim() });
       column = line.indexOf(EM_DASH, column + 1);
     }
-    const commaNot = line.match(COMMA_NOT);
-    if (commaNot) {
-      findings.push({
-        line: index + 1,
-        column: commaNot.index + 1,
-        kind: 'comma-not',
-        text: line.trim(),
-      });
-    }
-    const notBut = line.match(NOT_BUT);
-    if (notBut) {
-      findings.push({
-        line: index + 1,
-        column: notBut.index + 1,
-        kind: 'not-but',
-        text: line.trim(),
-      });
+    for (const pattern of WARNING_PATTERNS) {
+      const match = line.match(pattern.regex);
+      if (match) {
+        findings.push({
+          line: index + 1,
+          column: match.index + 1,
+          kind: pattern.kind,
+          text: line.trim(),
+        });
+      }
     }
   });
   return findings;
@@ -117,12 +129,8 @@ function lintFiles(files, root = repoRoot) {
 }
 
 function formatFinding(entry) {
-  const label =
-    entry.kind === 'em-dash'
-      ? 'em dash (U+2014)'
-      : entry.kind === 'comma-not'
-        ? 'possible contrastive negation ", not "'
-        : 'possible contrastive negation "not ..., but"';
+  const pattern = WARNING_PATTERNS.find((p) => p.kind === entry.kind);
+  const label = pattern ? pattern.label : 'em dash (U+2014)';
   return `${entry.file}:${entry.line}:${entry.column}: ${label}: ${entry.text}`;
 }
 
@@ -148,4 +156,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { lintFiles, listFiles, scanText };
+module.exports = { WARNING_PATTERNS, lintFiles, listFiles, scanText };

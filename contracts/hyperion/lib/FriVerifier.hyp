@@ -44,7 +44,8 @@ import "./ProofLayout.hyp";
 ///      final index. The products are taken four bits at a time from the
 ///      window tables `pw[w][v] = prod tab[4w + b]` over the bits b of the
 ///      nibble v (`sw` likewise over tabInv), so a point costs one mulmod per
-///      window instead of one per bit. A fold chain carries its current
+///      four-bit window (a bit-by-bit product would cost one per bit). A
+///      fold chain carries its current
 ///      domain point `P_r = g_{h_r}^rev(idx_r, h_r)` and its inverse: the
 ///      query point is `7 P_0`, the coset start of a round is
 ///      `s = P_r * g_k^-rev(pos, k)` (so `sInv = P_r^-1 * gk[k][pos]`), the

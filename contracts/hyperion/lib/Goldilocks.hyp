@@ -256,8 +256,9 @@ library Goldilocks {
 
     /// @notice Write both packed tables to memory at `ptr` (ten 64-byte words:
     ///         generators first, inverses at ptr + 320) so hot loops can look
-    ///         entries up with twoAdicGenAt / twoAdicGenInvAt for about 30 gas
-    ///         instead of the switch in twoAdicGen. The caller owns the 640
+    ///         entries up with twoAdicGenAt / twoAdicGenInvAt for about 30 gas,
+    ///         cheaper than the five-way switch of twoAdicGen. The caller owns
+    ///         the 640
     ///         bytes (allocate them once per verification).
     function loadTwoAdicTables(uint512 ptr) internal pure {
         assembly {

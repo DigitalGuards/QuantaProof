@@ -10,7 +10,7 @@
 //   --config <path>      deployment record (default: STARK_CONFIG or config/local-stark.json)
 //   --verifier <addr>    override the verifier address chosen from the config
 //   --gas-meter <addr>   override the gas meter address chosen from the config
-//   --call-only          skip the transaction, only run the qrl_call and the estimate
+//   --call-only          run the qrl_call and the estimate and send no transaction
 //
 // The verifier is picked from config.contracts.verifiers[<preset>], where the
 // preset is derived from the vector's `config` (scripts/lib/presets.js). The
@@ -228,7 +228,7 @@ async function runVerifyProof({ rpc, sender, config, vector, options = {} }) {
     receipt = await sender.send({ to: gasMeter, data, gas: toQuantity(gas) });
   } catch (error) {
     // The transaction pool caps a transaction at 128 KiB (txMaxSize in
-    // core/txpool/legacypool); larger proofs are simulated below instead.
+    // core/txpool/legacypool); larger proofs are simulated below.
     if (!/oversized data/i.test(error.message)) throw error;
     txError = error.message;
   }

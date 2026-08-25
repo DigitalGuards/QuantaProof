@@ -681,7 +681,7 @@ test('StarkFactRegistry and StateBridge', { skip, timeout: 900000 }, async (t) =
       withdrawArgs(entry, { signature: otherSigner }),
       'BadSignature()'
     );
-    // Signature over the message bytes instead of the digest.
+    // Signature over the raw message bytes; the contract verifies the digest.
     const overMessage = M.signDigest(M.shake256Digest(abi.hexToBytes(entry.leaf)), key.secretKey);
     await H.expectRevert(
       bridge,

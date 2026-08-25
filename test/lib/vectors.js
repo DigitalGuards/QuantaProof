@@ -126,7 +126,8 @@ function bytesToHex(bytes) {
 
 // Path of the first difference between two JSON-like values (arrays, plain
 // objects, primitives), or null when they are equal. Used by the suites to
-// report a readable location instead of a multi-megabyte diff.
+// report a readable location; a raw deep-equality failure would print a
+// multi-megabyte diff.
 function firstDifference(a, b, at = '$') {
   if (Array.isArray(a) || Array.isArray(b)) {
     if (!Array.isArray(a) || !Array.isArray(b)) return `${at}: array on one side only`;

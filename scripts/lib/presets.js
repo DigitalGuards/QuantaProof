@@ -14,8 +14,8 @@
 // sweep c3-a<k>-f<l> for k in {1, 2, 3, 4} and l in {0, 3, 5} minus the two
 // cells that coincide with c3 (a3-f3) and c3-binary (a1-f3): sixteen presets,
 // in the order the prover emits them. test/contracts/stark.test.js keeps its
-// own copy of the substitution (it groups vectors by config rather than by
-// name), so the contract suite stays independent of the deployment tooling.
+// own copy of the substitution and groups vectors by their `config`, so the
+// contract suite stays independent of the deployment tooling.
 
 const { spawnSync } = require('child_process');
 

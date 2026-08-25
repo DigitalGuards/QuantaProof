@@ -7,7 +7,7 @@ public values; `StateBridge` consumes those facts to advance a state root,
 accepts deposits into an append-only accumulator, and pays withdrawals that
 carry a Merkle inclusion proof and an ML-DSA-87 signature checked through the
 `mldsa87verify` builtin (precompile `0x03`) over a `shake256` digest
-(precompile `0x06`). Everything is Hyperion, high level, no assembly.
+(precompile `0x06`). Everything is high-level Hyperion without inline assembly.
 
 | File                                            | Role                                                            |
 | ----------------------------------------------- | --------------------------------------------------------------- |
@@ -185,8 +185,9 @@ of the STARK verifier.
 - The bridge trusts that the registry's verifier and program id match its own
   immutables; `FactMismatch()` catches a misconfiguration at the first batch.
 - Call values are `uint256` on this VM (`msg.value` and `call{value:}`), so a
-  withdrawal amount above `2^256 - 1` reverts with `TransferFailed()` instead
-  of being truncated.
+  withdrawal amount above `2^256 - 1` reverts with `TransferFailed()`; the
+  check runs on the full 512-bit amount before the call, so nothing is
+  truncated.
 
 ## Gas (gqrl dev node, chain 1337, receipt `gasUsed`)
 
@@ -220,8 +221,8 @@ revert (stale root, short and long public values, an element at `2^32`, a
 disagrees with the state, a flipped limb, an unproven batch, a reverting
 verifier); deposits (leaf, accumulator, events, balance); a withdrawal with a
 freshly generated ML-DSA-87 key and a four-leaf tree; replay; wrong signature
-(flipped byte, another leaf, another context, another signer, the message
-signed instead of the digest), wrong recipient, amount, nonce, index, sibling
+(flipped byte, another leaf, another context, another signer, a signature
+over the raw message bytes), wrong recipient, amount, nonce, index, sibling
 order, proof length and public key, followed by a successful withdrawal of the
 untouched leaf; a legacy-code-generator canary; and the real-verifier demo.
 

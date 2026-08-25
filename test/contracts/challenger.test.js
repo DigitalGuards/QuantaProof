@@ -6,7 +6,7 @@
 //   raw     every observe through observeCalldata, every group through nextU64
 //   typed   observeU64LE / observeExt / observeDigest, sampleField / sampleExt /
 //           sampleBits / checkWitness, exactly as the verifier will call them
-//   memory  like raw with observeMemory (word copy) instead of calldatacopy
+//   memory  like raw, every observe through observeMemory (a word copy)
 // Each replay must return every sampled u64, field element, bit sample and
 // proof-of-work outcome the vector recorded, plus every flush digest. Targeted
 // scripts then cover the 4-groups-per-flush boundary, discard-on-observe, the

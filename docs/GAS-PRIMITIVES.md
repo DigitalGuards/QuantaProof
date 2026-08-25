@@ -65,9 +65,9 @@ Karatsuba trades two `MUL` (10 gas) for two `ADD` and two `SUB` (12 gas) and
 the same operand traffic, so it does not help on a VM where `MUL` costs 5. The
 lever that works is fusing: sums of extension products fit in the 512-bit word
 (each product is below 2^131), so a chain of multiply-accumulate steps can pay
-the two `MOD` and the two assignments once at the end instead of per product
-(`Goldilocks.mulAdd` is the base field form). The FRI fold and the constraint
-evaluation are written that way in later milestones.
+the two `MOD` and the two assignments once at the end; the plain form pays
+them per product (`Goldilocks.mulAdd` is the base field form). The FRI fold
+and the constraint evaluation are written that way in later milestones.
 
 Why inv misses: the modexp precompile has a 200 gas floor (EIP-2565 pricing
 with 8-byte operands computes 21) and the pre-warmed `STATICCALL` costs 100,
@@ -119,7 +119,7 @@ Net marginal gas per operation. Yul rows: inline instruction sequence.
 
 The internal call costs about 40 gas on top of the inline sequence for the
 small functions (add, mul, sq), which is why hot loops in later milestones
-inline the Yul rather than call the library.
+inline the Yul sequence.
 
 Two-adic table storage, measured as `qrl_estimateGas` of one external call of
 `twoAdicGen(17)` (21,000 base and calldata included, identical for the three):
@@ -156,10 +156,9 @@ writes the image into its context struct at entry.
 | 9   | `Fp2.batchInverse`, per element (norm-based Montgomery) |      378 |          378 |
 | 10  | `Fp2.pow(x, 2^64 - 1)`                                  |   15,331 |       15,319 |
 
-`Fp2.batchInverse` runs Montgomery's trick over the base field norms rather
-than over the extension elements: one norm, three base `mulmod` for the prefix
-products and the shared inverse, and two `mulmod` to scale the conjugate, plus
-two memory words per element. The first version multiplied extension elements
+`Fp2.batchInverse` runs Montgomery's trick over the base field norms: one
+norm, three base `mulmod` for the prefix products and the shared inverse, and
+two `mulmod` to scale the conjugate, plus two memory words per element. The first version multiplied extension elements
 (three EF products per element) and measured 579 gas per element, above the
 537 of a direct inversion; on a VM whose modexp costs 300 gas, batching only
 pays when the per-element work stays in the base field. The FRI denominators
@@ -212,4 +211,4 @@ and FRI milestones use the word form.
   of 256 elements is 16 KB of calldata per array, which is why the batch
   wrappers stop at 256 operands per call.
 - The developer node caps a transaction fee at 1 quanta, so deployments use
-  the gas estimate plus 20 percent instead of a blanket limit.
+  the gas estimate plus 20 percent (a blanket limit would exceed the fee cap).

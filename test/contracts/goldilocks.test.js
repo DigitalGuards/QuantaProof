@@ -381,7 +381,7 @@ test('Goldilocks harness', { skip, timeout: 1200000 }, async (t) => {
     // 400 target is documented as missed in docs/GAS-PRIMITIVES.md when the
     // measurement lands above it; the regression bound is 500.
     assert.ok(inv < 500, `inv marginal ${inv} >= 500`);
-    // Loop bodies really ran: a witness-free loop would have zero cost.
+    // The loop bodies ran: a witness-free loop would have zero cost.
     assert.ok(rows.every((r) => r.gas2N > r.gasN));
   });
 });

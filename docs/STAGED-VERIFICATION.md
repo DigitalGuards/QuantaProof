@@ -11,7 +11,7 @@ keep every on-chain proof inside a single transaction.
 Two limits apply to a single `verify` transaction on QRL 2.0:
 
 1. The transaction pool refuses transactions above 131,072 bytes
-   (`txMaxSize = 4 * txSlotSize` in the go-qrl legacy pool, no CLI flag).
+   (`txMaxSize = 4 * txSlotSize` in the go-qrl legacy pool, without a CLI flag).
    With 7,690 bytes of envelope and ABI overhead, the largest proof that fits
    is 123,382 bytes. In the report, c3 at 2^20 (105,873 bytes) fits; c2 at
    2^20, c1 at 2^16 and every binary preset at 2^16 or larger do not.
@@ -47,8 +47,8 @@ From the phase table of `fib_c3_n12` (VERIFIER.md section 5): the prefix
 replay costs about 30k gas per stage, one input block about 130k, one FRI
 round block 20k to 60k, and one query's fold chain about 3k per round. For
 c1-binary at 2^20 the split is roughly 2 input blocks, 17 round blocks and
-100 queries: about 22 transactions of at most 1M gas each, versus one 17M
-transaction that the pool refuses anyway.
+100 queries: about 22 transactions of at most 1M gas each; the unstaged
+alternative is one 17M transaction that the pool refuses anyway.
 
 ## Why recursion wins
 
@@ -64,5 +64,5 @@ for example during a recursion outage.
 With `commit_proof_of_work_bits = 0` the per-round witness bytes are never
 observed, so several prefixes with the same transcript exist and `proofId`
 is malleable. Staging tolerates this (all stages of one submission share one
-prefix), and the fact registry keys facts by public values, never by
-`proofId`.
+prefix), and the fact registry keys facts by public values. `proofId` never
+keys a fact.

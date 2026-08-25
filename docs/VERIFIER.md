@@ -105,8 +105,9 @@ over cosets whose start is `g_{h+k}^rev(idx >> k, h)`. Every such point is a
 product over the set bits of an index of `g_{i+1}` (bit `i` of the index
 contributes `g_{i+1}`), so the bit reversal folds into the table order. The
 verifier takes these products four bits at a time from `pw`/`sw` (one `mulmod`
-per window instead of one per bit). A fold chain carries its current domain
-point `P_r = g_{h_r}^rev(idx_r, h_r)` and its inverse: `x_0 = 7 P_0`, the coset
+per four-bit window; a bit-by-bit product would cost one per bit). A fold
+chain carries its current domain point `P_r = g_{h_r}^rev(idx_r, h_r)` and its
+inverse: `x_0 = 7 P_0`, the coset
 start of a round is `s = P_r * g_k^-rev(pos, k)` (so `sInv = P_r^-1 * gk[k][pos]`),
 `P_{r+1} = P_r^(2^k)` (the `k` squarings the fold performs anyway) and the final
 evaluation point `g_H^rev(idx_R, H)` is `P_R` itself. One window product per
@@ -185,8 +186,9 @@ accept/reject decision and no raised error changes):
   contract computes all query points, all denominators (checking each for
   zero) and inverts them in one batch. `ZeroDenominator` carries no query
   number, so the first-failing-query difference is invisible.
-- Duplicate openings are compared as leaf digests (`MerkleMultiProof.gather`)
-  instead of row bytes; equivalent up to keccak collision resistance.
+- The contract compares duplicate openings as leaf digests
+  (`MerkleMultiProof.gather`) and the JS compares row bytes; the two are
+  equivalent up to keccak collision resistance.
 
 ## 5. Gas
 
@@ -248,8 +250,9 @@ percent of a transaction and is fixed by the proof layout; the plan's `16 * S`
 estimate is exact up to the zero bytes (`sib_count` fields, small witnesses).
 
 The optimizer setting moves the total by 2 to 6 percent: runs 1000000 keeps
-the wide lane masks and packed tables as `PUSH` instead of `CODECOPY`
-(`docs/GAS-PRIMITIVES.md`), the IR pipeline schedules the Yul better. The
+the wide lane masks and packed tables as `PUSH` where runs 200 fetches them
+with `CODECOPY` (`docs/GAS-PRIMITIVES.md`), the IR pipeline schedules the Yul
+better. The
 default build stays at runs 200 (the settings knob is `HYPERION_OPTIMIZE_RUNS`
 / `HYPERION_VIA_IR` in `scripts/compile-hyperion.js`, `scripts/hypc.js` and
 `test/lib/harness.js`); a deployment can pick either of the cheaper settings,
@@ -306,8 +309,8 @@ openings grow linearly with `Q` while `sortKeys` grows a little faster (88k at
   440 gas) or one bit-loop product (about 1,300 gas at `H = 15`) per round.
 - Query and final points come from the same window tables; the final point is
   the chain's own domain point.
-- Input rows are hashed straight from calldata into the scratch word (`calldatacopy` to `0x00`, `keccak256`),
-  never decoded, because only their bytes matter to the Merkle tree; the
+- Input rows are hashed straight from calldata into the scratch word (`calldatacopy` to `0x00`, `keccak256`)
+  without a decode, because only their bytes matter to the Merkle tree; the
   numeric values are read once more in `combineOpenings` with a per-element
   byte swap.
 - The canonical scan is a separate pass (about 2.5 percent of the execution)

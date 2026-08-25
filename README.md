@@ -27,7 +27,7 @@ Status: the verifier, the prover, the vectors, the fact registry and the bridge 
 - Gas: the consensus block cap is 20,000,000; the target is 8,000,000 or less per verification transaction. Runtime code is capped at 24,576 bytes per contract and `npm run size` and `npm run deploy` enforce it.
 - Target network: the 64-byte QRL 2.0 network (QIP-55) with the ML-DSA-87 verify precompile at `0x03` (64-byte digest) and SHAKE256 at `0x06`. Every compile uses the 64-byte compiler from the `hyperion-stark` worktree.
 - Contract tests run against a live QRVM (a `gqrl --dev` node or the Kurtosis composition). Node unit tests check the JS references against the Rust vectors without a chain, and the Rust mirror verifier must reproduce the upstream transcript byte for byte.
-- Facts are keyed by public values, never by a proof hash: proof bytes contain unobserved witness bytes and are malleable.
+- Facts are keyed by public values. A proof hash is never a key: proof bytes contain unobserved witness bytes and are malleable.
 
 ## Structure
 
