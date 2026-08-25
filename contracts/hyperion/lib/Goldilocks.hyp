@@ -1,0 +1,379 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+/// @title Goldilocks
+/// @notice Arithmetic in the Goldilocks prime field p = 2^64 - 2^32 + 1 for the
+///         512-bit QRVM, plus the calldata lane helpers the proof layout needs.
+/// @dev Conventions shared by every function:
+///      - values travel as uint512 (the native word; uint256 would cost a mask
+///        per operation) and are canonical, that is in [0, p), unless a
+///        function documents otherwise;
+///      - every hot path is Yul; `addmod` and `mulmod` are 512-bit on the QRVM
+///        so a single opcode reduces a sum or a product;
+///      - lazy reduction: a product of two canonical elements is below 2^128,
+///        so up to 2^384 such products can be summed in one word and reduced
+///        with a single `mod` (see mulAdd and Fp2.mul);
+///      - inversion goes through the modexp precompile at address 0x05 with
+///        the EIP-2565 pricing floor (200 gas) plus a pre-warmed STATICCALL;
+///      - scratch memory 0x00..0x7f is clobbered by inv; nothing else touches
+///        memory.
+///      The two-adic generator tables (Plonky3 TWO_ADIC_GENERATORS[0..=32] and
+///      their inverses) are packed eight 64-bit entries per 512-bit constant;
+///      entry i sits in word i >> 3 at bit offset 64 * (i & 7) from the low
+///      end. Yul can read value-type constants with literal values, which is
+///      what makes the packed lookup a five-way switch plus a shift.
+library Goldilocks {
+    /// @notice The field modulus p = 2^64 - 2^32 + 1.
+    uint512 internal constant P = 0xFFFFFFFF00000001;
+    /// @notice p - 2, the Fermat inversion exponent handed to modexp.
+    uint512 internal constant P_MINUS_2 = 0xFFFFFFFEFFFFFFFF;
+    /// @notice Multiplicative generator of the field.
+    uint512 internal constant GENERATOR = 7;
+    /// @notice p - 1 = 2^32 * 4294967295, so the largest power-of-two subgroup has 2^32 elements.
+    uint512 internal constant TWO_ADICITY = 32;
+    /// @notice 1/2 mod p.
+    uint512 internal constant INV2 = 0x7FFFFFFF80000001;
+    /// @notice Low 64 bits.
+    uint512 internal constant MASK64 = 0xFFFFFFFFFFFFFFFF;
+
+    // Lane masks: the same 64-bit pattern repeated across all eight lanes of a
+    // word, used by the three-stage byte swap (cdLanes, bswap64) and the SWAR
+    // canonical check (lanesCanonical).
+    uint512 internal constant LANE_MASK_8 =
+        0x00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF;
+    uint512 internal constant LANE_MASK_16 =
+        0x0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF;
+    uint512 internal constant LANE_MASK_32 =
+        0x00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF;
+    uint512 internal constant LANE_TOP_BIT =
+        0x80000000000000008000000000000000800000000000000080000000000000008000000000000000800000000000000080000000000000008000000000000000;
+    uint512 internal constant LANE_LOW_63 =
+        0x7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF;
+
+    // Packed TWO_ADIC_GENERATORS[0..=32]: g_i generates the subgroup of order
+    // 2^i; g_32 = 7^((p - 1) / 2^32) and g_i = g_(i+1)^2.
+    uint512 internal constant TAG_0 =
+        0xF80007FF08000001000000800000000000003FFFFFFFC000EFFFFFFF00000001FFFFFFFEFF0000010001000000000000FFFFFFFF000000000000000000000001;
+    uint512 internal constant TAG_1 =
+        0xF6B2CFFE2306BAACE0EE099310BBA1E21544EF2335D17997F2C35199959DFCB60653B4801DA1C8CF9D8F2AD78BFED9721905D02A5C411F4EBF79143CE60CA966;
+    uint512 internal constant TAG_2 =
+        0xEA9D5A1336FBC98B4B2A18ADE67246B5F502AEF53232265430BA2ECD5E93E76DFBD41C6B8CAA330281281A7B05F9BEACABD0A6E8AA3D8A0E54DF9630BF79450E;
+    uint512 internal constant TAG_3 =
+        0x400A7F755588E6597E9BD009B86A0845DFA8C93BA46D266659049500004A448510D78DD8915A171DED41D05B78D6E2864BBAF5976ECFEFD886CDCC31C307E171;
+    uint512 internal constant TAG_4 =
+        0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000185629DCDA58878C;
+
+    // Packed inverses of the same table: ginv_i = g_i^(-1) = g_i^(2^i - 1).
+    uint512 internal constant TAGI_0 =
+        0xFFEFFFFF00000011FDFFFFFF00000001FFFFFFFEFFFC00010000001000000000000000FFFFFFFF00FFFEFFFF00000001FFFFFFFF000000000000000000000001;
+    uint512 internal constant TAGI_1 =
+        0x158EE068C8241329409730A1895ADFB63712791D9EB0314A9AF01E431FBD6EA076A40E0866A8E50D3B9AE9D1D8D875893DE19C67CF496A741D62E30FA4A4EEB0;
+    uint512 internal constant TAGI_2 =
+        0x4BB9AEE372CF655ED46E5A4C36458C11A52008AC564A2368EF8856969FE6ED7B46A23C48234C7DF922E1FBF03F8B95D6CC9E5A57B8343B3F6D341B1C9A04ED19;
+    uint512 internal constant TAGI_3 =
+        0x95C0EC9A7AB50701E2434909EEC4F00BE4D14A114454645D3EA7EAB8D885718491F3853F38E675D9EA52F593BB20759AC01F93FC71BB0B9B10EB845263814DB7;
+    uint512 internal constant TAGI_4 =
+        0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000076B6B635B6FC8719;
+
+    /// @notice inv(0) was requested; zero has no inverse.
+    error ZeroInverse();
+    /// @notice The modexp precompile call failed or returned an unexpected length.
+    error ModExpFailed();
+    /// @notice A calldata element was >= p.
+    error NonCanonicalElement();
+    /// @notice A two-adic table index was above TWO_ADICITY.
+    error TwoAdicIndexOutOfRange();
+    /// @notice rev() was asked for a bit width outside 1..32.
+    error BitWidthOutOfRange();
+
+    // ------------------------------------------------------------------
+    // Ring operations (inputs canonical)
+    // ------------------------------------------------------------------
+
+    /// @notice (a + b) mod p.
+    function add(uint512 a, uint512 b) internal pure returns (uint512 c) {
+        assembly {
+            c := addmod(a, b, P)
+        }
+    }
+
+    /// @notice (a - b) mod p. Relies on b < p so that p - b is in [1, p].
+    function sub(uint512 a, uint512 b) internal pure returns (uint512 c) {
+        assembly {
+            c := addmod(a, sub(P, b), P)
+        }
+    }
+
+    /// @notice -a mod p.
+    function neg(uint512 a) internal pure returns (uint512 c) {
+        assembly {
+            c := mod(sub(P, a), P)
+        }
+    }
+
+    /// @notice a * b mod p.
+    function mul(uint512 a, uint512 b) internal pure returns (uint512 c) {
+        assembly {
+            c := mulmod(a, b, P)
+        }
+    }
+
+    /// @notice a^2 mod p.
+    function sq(uint512 a) internal pure returns (uint512 c) {
+        assembly {
+            c := mulmod(a, a, P)
+        }
+    }
+
+    /// @notice Reduce any word into [0, p).
+    function reduce(uint512 x) internal pure returns (uint512 c) {
+        assembly {
+            c := mod(x, P)
+        }
+    }
+
+    /// @notice (a * b + c) mod p with one reduction.
+    /// @dev a and b canonical; c may be any accumulated value below 2^384
+    ///      (for example a sum of unreduced products), so callers can chain
+    ///      several products through c and reduce once at the end.
+    function mulAdd(uint512 a, uint512 b, uint512 c) internal pure returns (uint512 r) {
+        assembly {
+            r := mod(add(mul(a, b), c), P)
+        }
+    }
+
+    /// @notice Unreduced product a * b (< 2^128 for canonical inputs).
+    function mulNoReduce(uint512 a, uint512 b) internal pure returns (uint512 r) {
+        assembly {
+            r := mul(a, b)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Inversion and powers
+    // ------------------------------------------------------------------
+
+    /// @notice x^(p - 2) mod p through the modexp precompile.
+    /// @dev Input layout (120 bytes in scratch memory): three 32-byte length
+    ///      fields (8, 8, 8), then base, exponent p - 2 and modulus p as 8-byte
+    ///      big-endian values. Word 0 (bytes 0..63) holds the base and exponent
+    ///      lengths, word 1 (bytes 64..127) holds the modulus length and the
+    ///      three operands. The precompile returns exactly len(mod) = 8 bytes,
+    ///      read back from the top of scratch word 0. Reverts with
+    ///      ZeroInverse() for x == 0 and ModExpFailed() if the call fails or
+    ///      returns a different length (a chain without the precompile).
+    function inv(uint512 x) internal view returns (uint512 r) {
+        if (x == 0) revert ZeroInverse();
+        bool ok;
+        assembly {
+            mstore(0x00, or(shl(256, 8), 8))
+            mstore(
+                0x40,
+                or(or(shl(256, 8), shl(192, x)), or(shl(128, P_MINUS_2), shl(64, P)))
+            )
+            ok := staticcall(gas(), 5, 0x00, 120, 0x00, 8)
+            ok := and(ok, eq(returndatasize(), 8))
+            r := shr(448, mload(0x00))
+        }
+        if (!ok) revert ModExpFailed();
+    }
+
+    /// @notice x^e mod p by square-and-multiply (e < 2^64 keeps it to 64 rounds).
+    function pow(uint512 x, uint512 e) internal pure returns (uint512 r) {
+        assembly {
+            r := 1
+            for {} e {} {
+                if and(e, 1) {
+                    r := mulmod(r, x, P)
+                }
+                x := mulmod(x, x, P)
+                e := shr(1, e)
+            }
+        }
+    }
+
+    /// @notice x^(2^k) mod p: k successive squarings.
+    function pow2k(uint512 x, uint512 k) internal pure returns (uint512 r) {
+        assembly {
+            r := x
+            for {} k { k := sub(k, 1) } {
+                r := mulmod(r, r, P)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Two-adic generator tables
+    // ------------------------------------------------------------------
+
+    /// @notice Generator of the multiplicative subgroup of order 2^i, 0 <= i <= 32.
+    function twoAdicGen(uint512 i) internal pure returns (uint512 g) {
+        if (i > TWO_ADICITY) revert TwoAdicIndexOutOfRange();
+        assembly {
+            let w := TAG_0
+            switch shr(3, i)
+            case 1 {
+                w := TAG_1
+            }
+            case 2 {
+                w := TAG_2
+            }
+            case 3 {
+                w := TAG_3
+            }
+            case 4 {
+                w := TAG_4
+            }
+            g := and(shr(shl(6, and(i, 7)), w), MASK64)
+        }
+    }
+
+    /// @notice Inverse of twoAdicGen(i), 0 <= i <= 32.
+    function twoAdicGenInv(uint512 i) internal pure returns (uint512 g) {
+        if (i > TWO_ADICITY) revert TwoAdicIndexOutOfRange();
+        assembly {
+            let w := TAGI_0
+            switch shr(3, i)
+            case 1 {
+                w := TAGI_1
+            }
+            case 2 {
+                w := TAGI_2
+            }
+            case 3 {
+                w := TAGI_3
+            }
+            case 4 {
+                w := TAGI_4
+            }
+            g := and(shr(shl(6, and(i, 7)), w), MASK64)
+        }
+    }
+
+    /// @notice Size in bytes of the memory image written by loadTwoAdicTables.
+    uint512 internal constant TWO_ADIC_TABLES_BYTES = 640;
+
+    /// @notice Write both packed tables to memory at `ptr` (ten 64-byte words:
+    ///         generators first, inverses at ptr + 320) so hot loops can look
+    ///         entries up with twoAdicGenAt / twoAdicGenInvAt for about 30 gas
+    ///         instead of the switch in twoAdicGen. The caller owns the 640
+    ///         bytes (allocate them once per verification).
+    function loadTwoAdicTables(uint512 ptr) internal pure {
+        assembly {
+            mstore(ptr, TAG_0)
+            mstore(add(ptr, 64), TAG_1)
+            mstore(add(ptr, 128), TAG_2)
+            mstore(add(ptr, 192), TAG_3)
+            mstore(add(ptr, 256), TAG_4)
+            mstore(add(ptr, 320), TAGI_0)
+            mstore(add(ptr, 384), TAGI_1)
+            mstore(add(ptr, 448), TAGI_2)
+            mstore(add(ptr, 512), TAGI_3)
+            mstore(add(ptr, 576), TAGI_4)
+        }
+    }
+
+    /// @notice twoAdicGen(i) from a memory image written by loadTwoAdicTables.
+    /// @dev No range check: i must be at most 32.
+    function twoAdicGenAt(uint512 ptr, uint512 i) internal pure returns (uint512 g) {
+        assembly {
+            g := and(shr(shl(6, and(i, 7)), mload(add(ptr, shl(6, shr(3, i))))), MASK64)
+        }
+    }
+
+    /// @notice twoAdicGenInv(i) from a memory image written by loadTwoAdicTables.
+    /// @dev No range check: i must be at most 32.
+    function twoAdicGenInvAt(uint512 ptr, uint512 i) internal pure returns (uint512 g) {
+        assembly {
+            g := and(shr(shl(6, and(i, 7)), mload(add(add(ptr, 320), shl(6, shr(3, i))))), MASK64)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Bit and byte manipulation
+    // ------------------------------------------------------------------
+
+    /// @notice Reverse the low `bits` bits of x (1 <= bits <= 32); bits of x
+    ///         above that width are ignored. Plonky3 reverse_bits_len.
+    /// @dev Full 32-bit reversal by five mask-and-shift stages, then a right
+    ///      shift by 32 - bits, so the cost is independent of `bits`.
+    function rev(uint512 x, uint512 bits) internal pure returns (uint512 r) {
+        if (bits == 0 || bits > 32) revert BitWidthOutOfRange();
+        assembly {
+            r := and(x, 0xFFFFFFFF)
+            r := or(shl(1, and(r, 0x55555555)), and(shr(1, r), 0x55555555))
+            r := or(shl(2, and(r, 0x33333333)), and(shr(2, r), 0x33333333))
+            r := or(shl(4, and(r, 0x0F0F0F0F)), and(shr(4, r), 0x0F0F0F0F))
+            r := or(shl(8, and(r, 0x00FF00FF)), and(shr(8, r), 0x00FF00FF))
+            r := or(and(shl(16, r), 0xFFFF0000), shr(16, r))
+            r := shr(sub(32, bits), r)
+        }
+    }
+
+    /// @notice Byte swap of one 64-bit value (x < 2^64).
+    function bswap64(uint512 x) internal pure returns (uint512 r) {
+        assembly {
+            r := or(shl(8, and(x, 0x00FF00FF00FF00FF)), and(shr(8, x), 0x00FF00FF00FF00FF))
+            r := or(shl(16, and(r, 0x0000FFFF0000FFFF)), and(shr(16, r), 0x0000FFFF0000FFFF))
+            r := or(and(shl(32, r), 0xFFFFFFFF00000000), shr(32, r))
+        }
+    }
+
+    /// @notice True when x is in [0, p).
+    function isCanonical(uint512 x) internal pure returns (bool ok) {
+        assembly {
+            ok := lt(x, P)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Calldata lanes: 8-byte little-endian elements packed 8 per word
+    // ------------------------------------------------------------------
+
+    /// @notice The 64 bytes at calldata `offset` as eight u64 lanes, each
+    ///         byte-swapped from little-endian wire order into a numeric value.
+    /// @dev One calldataload followed by a three-stage swap on all eight lanes
+    ///      at once (adjacent bytes, adjacent 16-bit halves, adjacent 32-bit
+    ///      halves). Lane k (the k-th element in calldata order) ends up in
+    ///      bits [448 - 64k, 512 - 64k); use lane() to extract it. No canonical
+    ///      check: see lanesCanonical and cdElem.
+    function cdLanes(uint512 offset) internal pure returns (uint512 lanes) {
+        assembly {
+            let w := calldataload(offset)
+            w := or(shl(8, and(w, LANE_MASK_8)), and(shr(8, w), LANE_MASK_8))
+            w := or(shl(16, and(w, LANE_MASK_16)), and(shr(16, w), LANE_MASK_16))
+            lanes := or(shl(32, and(w, LANE_MASK_32)), and(shr(32, w), LANE_MASK_32))
+        }
+    }
+
+    /// @notice Lane k (0 <= k <= 7) of a cdLanes word.
+    function lane(uint512 lanes, uint512 k) internal pure returns (uint512 x) {
+        assembly {
+            x := and(shr(sub(448, shl(6, k)), lanes), MASK64)
+        }
+    }
+
+    /// @notice True when all eight lanes of a cdLanes word are below p.
+    /// @dev SWAR: a lane is >= p exactly when its top bit is set and its low 63
+    ///      bits plus (2^32 - 1) overflow into bit 63. The low-63-bit sums never
+    ///      carry across lanes, so one add and two ands test all eight lanes.
+    function lanesCanonical(uint512 lanes) internal pure returns (bool ok) {
+        assembly {
+            ok := iszero(
+                and(and(lanes, LANE_TOP_BIT), add(and(lanes, LANE_LOW_63), LANE_MASK_32))
+            )
+        }
+    }
+
+    /// @notice One canonical element from the 8 little-endian bytes at calldata
+    ///         `offset`; reverts with NonCanonicalElement() when the value is >= p.
+    function cdElem(uint512 offset) internal pure returns (uint512 x) {
+        assembly {
+            x := shr(448, calldataload(offset))
+            x := or(shl(8, and(x, 0x00FF00FF00FF00FF)), and(shr(8, x), 0x00FF00FF00FF00FF))
+            x := or(shl(16, and(x, 0x0000FFFF0000FFFF)), and(shr(16, x), 0x0000FFFF0000FFFF))
+            x := or(and(shl(32, x), 0xFFFFFFFF00000000), shr(32, x))
+        }
+        if (x >= P) revert NonCanonicalElement();
+    }
+}

@@ -1,0 +1,353 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "../lib/Fp2.hyp";
+
+/// @title Fp2Harness
+/// @notice External wrappers around every Fp2 library function, batch variants
+///         over interleaved uint64[] arrays (element j is (a[2j], a[2j+1]),
+///         256 elements per call), a memory batchInverse driver and a gas loop.
+/// @dev Test-only. See GoldilocksHarness for the gas loop method; ops here:
+///        0  empty Yul loop
+///        1  (x0, x1) := x * y                (lazy-reduced extension product)
+///        2  (x0, x1) := x^2
+///        3  (x0, x1) := x * b                (base scalar)
+///        4  (x0, x1) := x + y
+///        5  (x0, x1) := 1 / x                (norm, modexp, two mulmod)
+///        6  empty high-level loop
+///        7  (x0, x1) = Fp2.mul(x, y)
+///        8  (x0, x1) = Fp2.inv(x)
+///        9  Fp2.batchInverse over n elements prepared before the timer
+///        10 (x0, x1) = Fp2.pow(x, 2^64 - 1)
+///        11 (x0, x1) = Fp2.sq(x)
+contract Fp2Harness {
+    /// @dev Literal copies of the library constants for inline assembly.
+    uint512 internal constant P = 0xFFFFFFFF00000001;
+    uint512 internal constant W = 7;
+
+    // ------------------------------------------------------------------
+    // Single operations
+    // ------------------------------------------------------------------
+
+    function fromBase(uint512 x) external pure returns (uint512, uint512) {
+        return Fp2.fromBase(x);
+    }
+
+    function equal(uint512 a0, uint512 a1, uint512 b0, uint512 b1) external pure returns (bool) {
+        return Fp2.equal(a0, a1, b0, b1);
+    }
+
+    function add(
+        uint512 a0,
+        uint512 a1,
+        uint512 b0,
+        uint512 b1
+    ) external pure returns (uint512, uint512) {
+        return Fp2.add(a0, a1, b0, b1);
+    }
+
+    function sub(
+        uint512 a0,
+        uint512 a1,
+        uint512 b0,
+        uint512 b1
+    ) external pure returns (uint512, uint512) {
+        return Fp2.sub(a0, a1, b0, b1);
+    }
+
+    function neg(uint512 a0, uint512 a1) external pure returns (uint512, uint512) {
+        return Fp2.neg(a0, a1);
+    }
+
+    function mul(
+        uint512 a0,
+        uint512 a1,
+        uint512 b0,
+        uint512 b1
+    ) external pure returns (uint512, uint512) {
+        return Fp2.mul(a0, a1, b0, b1);
+    }
+
+    function sq(uint512 a0, uint512 a1) external pure returns (uint512, uint512) {
+        return Fp2.sq(a0, a1);
+    }
+
+    function mulBase(uint512 a0, uint512 a1, uint512 b) external pure returns (uint512, uint512) {
+        return Fp2.mulBase(a0, a1, b);
+    }
+
+    function norm(uint512 a0, uint512 a1) external pure returns (uint512) {
+        return Fp2.norm(a0, a1);
+    }
+
+    function inv(uint512 a0, uint512 a1) external view returns (uint512, uint512) {
+        return Fp2.inv(a0, a1);
+    }
+
+    function pow(uint512 a0, uint512 a1, uint512 e) external pure returns (uint512, uint512) {
+        return Fp2.pow(a0, a1, e);
+    }
+
+    // ------------------------------------------------------------------
+    // Batch operations over interleaved (c0, c1) arrays
+    // ------------------------------------------------------------------
+
+    function batchAdd(
+        uint64[] calldata a,
+        uint64[] calldata b
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i += 2) {
+                (uint512 c0, uint512 c1) = Fp2.add(a[i], a[i + 1], b[i], b[i + 1]);
+                out[i] = uint64(c0);
+                out[i + 1] = uint64(c1);
+            }
+        }
+    }
+
+    function batchSub(
+        uint64[] calldata a,
+        uint64[] calldata b
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i += 2) {
+                (uint512 c0, uint512 c1) = Fp2.sub(a[i], a[i + 1], b[i], b[i + 1]);
+                out[i] = uint64(c0);
+                out[i + 1] = uint64(c1);
+            }
+        }
+    }
+
+    function batchNeg(uint64[] calldata a) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i += 2) {
+                (uint512 c0, uint512 c1) = Fp2.neg(a[i], a[i + 1]);
+                out[i] = uint64(c0);
+                out[i + 1] = uint64(c1);
+            }
+        }
+    }
+
+    function batchMul(
+        uint64[] calldata a,
+        uint64[] calldata b
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i += 2) {
+                (uint512 c0, uint512 c1) = Fp2.mul(a[i], a[i + 1], b[i], b[i + 1]);
+                out[i] = uint64(c0);
+                out[i + 1] = uint64(c1);
+            }
+        }
+    }
+
+    function batchSq(uint64[] calldata a) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i += 2) {
+                (uint512 c0, uint512 c1) = Fp2.sq(a[i], a[i + 1]);
+                out[i] = uint64(c0);
+                out[i + 1] = uint64(c1);
+            }
+        }
+    }
+
+    /// @notice One base scalar per element: s.length == a.length / 2.
+    function batchMulBase(
+        uint64[] calldata a,
+        uint64[] calldata s
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i += 2) {
+                (uint512 c0, uint512 c1) = Fp2.mulBase(a[i], a[i + 1], s[i / 2]);
+                out[i] = uint64(c0);
+                out[i + 1] = uint64(c1);
+            }
+        }
+    }
+
+    function batchNorm(uint64[] calldata a) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length / 2);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i += 2) {
+                out[i / 2] = uint64(Fp2.norm(a[i], a[i + 1]));
+            }
+        }
+    }
+
+    function batchInv(uint64[] calldata a) external view returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i += 2) {
+                (uint512 c0, uint512 c1) = Fp2.inv(a[i], a[i + 1]);
+                out[i] = uint64(c0);
+                out[i + 1] = uint64(c1);
+            }
+        }
+    }
+
+    /// @notice One exponent per element: e.length == a.length / 2.
+    function batchPow(
+        uint64[] calldata a,
+        uint64[] calldata e
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i += 2) {
+                (uint512 c0, uint512 c1) = Fp2.pow(a[i], a[i + 1], e[i / 2]);
+                out[i] = uint64(c0);
+                out[i + 1] = uint64(c1);
+            }
+        }
+    }
+
+    /// @notice Copy the interleaved elements into a memory array of 64-byte
+    ///         slots, invert them in place with Fp2.batchInverse and return them.
+    function batchInverse(uint64[] calldata a) external view returns (uint64[] memory out) {
+        uint256 count = a.length / 2;
+        uint512[] memory slots = new uint512[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i++) {
+                slots[i] = a[i];
+            }
+        }
+        uint512 ptr;
+        assembly {
+            ptr := add(slots, 64)
+        }
+        Fp2.batchInverse(ptr, count);
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i++) {
+                out[i] = uint64(slots[i]);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Gas loop
+    // ------------------------------------------------------------------
+
+    function gasLoop(
+        uint8 op,
+        uint512 n
+    ) external view returns (uint512 used, uint512 witness0, uint512 witness1) {
+        uint512 x0 = n + 3;
+        uint512 x1 = n + 5;
+        uint512 y0 = n + 7;
+        uint512 y1 = n + 11;
+        uint512 ptr;
+        if (op == 9) {
+            uint512[] memory slots = new uint512[](uint256(2 * n));
+            unchecked {
+                for (uint256 i = 0; i < 2 * n; i++) {
+                    slots[i] = i + 1;
+                }
+            }
+            assembly {
+                ptr := add(slots, 64)
+            }
+        }
+        uint512 before = gasleft();
+        if (op < 6) {
+            assembly {
+                function inv64(v) -> r {
+                    mstore(0x00, or(shl(256, 8), 8))
+                    mstore(
+                        0x40,
+                        or(
+                            or(shl(256, 8), shl(192, v)),
+                            or(shl(128, 0xFFFFFFFEFFFFFFFF), shl(64, 0xFFFFFFFF00000001))
+                        )
+                    )
+                    if iszero(staticcall(gas(), 5, 0x00, 120, 0x00, 8)) {
+                        revert(0, 0)
+                    }
+                    r := shr(448, mload(0x00))
+                }
+                switch op
+                case 0 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {}
+                }
+                case 1 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        let t0 := mod(add(mul(x0, y0), mul(W, mul(x1, y1))), P)
+                        x1 := mod(add(mul(x0, y1), mul(x1, y0)), P)
+                        x0 := t0
+                    }
+                }
+                case 2 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        let t0 := mod(add(mul(x0, x0), mul(W, mul(x1, x1))), P)
+                        x1 := mod(shl(1, mul(x0, x1)), P)
+                        x0 := t0
+                    }
+                }
+                case 3 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x0 := mulmod(x0, y0, P)
+                        x1 := mulmod(x1, y0, P)
+                    }
+                }
+                case 4 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x0 := addmod(x0, y0, P)
+                        x1 := addmod(x1, y1, P)
+                    }
+                }
+                case 5 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        let nrm := mod(add(mul(x0, x0), mul(W, mul(x1, sub(P, x1)))), P)
+                        let nInv := inv64(nrm)
+                        x0 := mulmod(x0, nInv, P)
+                        x1 := mulmod(sub(P, x1), nInv, P)
+                    }
+                }
+            }
+        } else if (op == 6) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {}
+            }
+        } else if (op == 7) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    (x0, x1) = Fp2.mul(x0, x1, y0, y1);
+                }
+            }
+        } else if (op == 8) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    (x0, x1) = Fp2.inv(x0, x1);
+                }
+            }
+        } else if (op == 9) {
+            Fp2.batchInverse(ptr, n);
+            assembly {
+                x0 := mload(ptr)
+                x1 := mload(add(ptr, 64))
+            }
+        } else if (op == 10) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    (x0, x1) = Fp2.pow(x0, x1, 0xFFFFFFFFFFFFFFFF);
+                }
+            }
+        } else if (op == 11) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    (x0, x1) = Fp2.sq(x0, x1);
+                }
+            }
+        } else {
+            revert("unknown op");
+        }
+        used = before - gasleft();
+        witness0 = x0;
+        witness1 = x1;
+    }
+}

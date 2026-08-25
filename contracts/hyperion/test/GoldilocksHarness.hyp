@@ -1,0 +1,858 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "../lib/Goldilocks.hyp";
+
+/// @title GoldilocksHarness
+/// @notice External wrappers around every Goldilocks library function so the
+///         contract test suite can compare them with the JS reference, batch
+///         variants over uint64[] arrays (256 operands per call keeps RPC round
+///         trips low), calldata lane decoding through a bytes argument, two
+///         table-storage alternatives kept for measurement, and a gas loop.
+/// @dev Test-only. Batch loops index with uint256 because Hyperion array
+///      indices are uint256 typed. gasLoop(op, n) runs n iterations of one
+///      primitive and returns the gasleft() delta; the marginal cost per
+///      iteration is (gasLoop(op, 2n) - gasLoop(op, n)) / n and the loop
+///      overhead is the same figure for op 0 (empty Yul loop) or op 16 (empty
+///      high-level loop). The running value feeds every iteration and is
+///      returned as `witness` so the optimizer can neither hoist nor drop the
+///      body.
+contract GoldilocksHarness {
+    // Literal copies of the library constants: inline assembly accepts only
+    // direct number constants, so a Goldilocks.X reference cannot be used in Yul.
+    uint512 internal constant P = 0xFFFFFFFF00000001;
+    uint512 internal constant LANE_MASK_8 =
+        0x00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF;
+    uint512 internal constant LANE_MASK_16 =
+        0x0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF;
+    uint512 internal constant LANE_MASK_32 =
+        0x00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF;
+    uint512 internal constant LANE_TOP_BIT =
+        0x80000000000000008000000000000000800000000000000080000000000000008000000000000000800000000000000080000000000000008000000000000000;
+    uint512 internal constant LANE_LOW_63 =
+        0x7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF7FFFFFFFFFFFFFFF;
+    uint512 internal constant TAG_0 =
+        0xF80007FF08000001000000800000000000003FFFFFFFC000EFFFFFFF00000001FFFFFFFEFF0000010001000000000000FFFFFFFF000000000000000000000001;
+    uint512 internal constant TAG_1 =
+        0xF6B2CFFE2306BAACE0EE099310BBA1E21544EF2335D17997F2C35199959DFCB60653B4801DA1C8CF9D8F2AD78BFED9721905D02A5C411F4EBF79143CE60CA966;
+    uint512 internal constant TAG_2 =
+        0xEA9D5A1336FBC98B4B2A18ADE67246B5F502AEF53232265430BA2ECD5E93E76DFBD41C6B8CAA330281281A7B05F9BEACABD0A6E8AA3D8A0E54DF9630BF79450E;
+    uint512 internal constant TAG_3 =
+        0x400A7F755588E6597E9BD009B86A0845DFA8C93BA46D266659049500004A448510D78DD8915A171DED41D05B78D6E2864BBAF5976ECFEFD886CDCC31C307E171;
+    uint512 internal constant TAG_4 =
+        0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000185629DCDA58878C;
+
+    /// @notice Two-adic generators as one bytes constant (8 bytes big-endian
+    ///         each), the codecopy alternative to the packed uint512 constants.
+    bytes internal constant TWO_ADIC_BLOB =
+        hex"0000000000000001ffffffff000000000001000000000000fffffffeff000001efffffff0000000100003fffffffc0000000008000000000f80007ff08000001bf79143ce60ca9661905d02a5c411f4e9d8f2ad78bfed9720653b4801da1c8cff2c35199959dfcb61544ef2335d17997e0ee099310bba1e2f6b2cffe2306baac54df9630bf79450eabd0a6e8aa3d8a0e81281a7b05f9beacfbd41c6b8caa330230ba2ecd5e93e76df502aef5323226544b2a18ade67246b5ea9d5a1336fbc98b86cdcc31c307e1714bbaf5976ecfefd8ed41d05b78d6e28610d78dd8915a171d59049500004a4485dfa8c93ba46d26667e9bd009b86a0845400a7f755588e659185629dcda58878c";
+
+    // ------------------------------------------------------------------
+    // Single operations
+    // ------------------------------------------------------------------
+
+    function add(uint512 a, uint512 b) external pure returns (uint512) {
+        return Goldilocks.add(a, b);
+    }
+
+    function sub(uint512 a, uint512 b) external pure returns (uint512) {
+        return Goldilocks.sub(a, b);
+    }
+
+    function neg(uint512 a) external pure returns (uint512) {
+        return Goldilocks.neg(a);
+    }
+
+    function mul(uint512 a, uint512 b) external pure returns (uint512) {
+        return Goldilocks.mul(a, b);
+    }
+
+    function sq(uint512 a) external pure returns (uint512) {
+        return Goldilocks.sq(a);
+    }
+
+    function reduce(uint512 x) external pure returns (uint512) {
+        return Goldilocks.reduce(x);
+    }
+
+    function mulAdd(uint512 a, uint512 b, uint512 c) external pure returns (uint512) {
+        return Goldilocks.mulAdd(a, b, c);
+    }
+
+    function mulNoReduce(uint512 a, uint512 b) external pure returns (uint512) {
+        return Goldilocks.mulNoReduce(a, b);
+    }
+
+    function inv(uint512 x) external view returns (uint512) {
+        return Goldilocks.inv(x);
+    }
+
+    function pow(uint512 x, uint512 e) external pure returns (uint512) {
+        return Goldilocks.pow(x, e);
+    }
+
+    function pow2k(uint512 x, uint512 k) external pure returns (uint512) {
+        return Goldilocks.pow2k(x, k);
+    }
+
+    function twoAdicGen(uint512 i) external pure returns (uint512) {
+        return Goldilocks.twoAdicGen(i);
+    }
+
+    function twoAdicGenInv(uint512 i) external pure returns (uint512) {
+        return Goldilocks.twoAdicGenInv(i);
+    }
+
+    function rev(uint512 x, uint512 bits) external pure returns (uint512) {
+        return Goldilocks.rev(x, bits);
+    }
+
+    function bswap64(uint512 x) external pure returns (uint512) {
+        return Goldilocks.bswap64(x);
+    }
+
+    function isCanonical(uint512 x) external pure returns (bool) {
+        return Goldilocks.isCanonical(x);
+    }
+
+    function lane(uint512 lanes, uint512 k) external pure returns (uint512) {
+        return Goldilocks.lane(lanes, k);
+    }
+
+    function lanesCanonicalWord(uint512 lanes) external pure returns (bool) {
+        return Goldilocks.lanesCanonical(lanes);
+    }
+
+    // ------------------------------------------------------------------
+    // Batch operations (element-wise over uint64[] operands)
+    // ------------------------------------------------------------------
+
+    function batchAdd(
+        uint64[] calldata a,
+        uint64[] calldata b
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i++) {
+                out[i] = uint64(Goldilocks.add(a[i], b[i]));
+            }
+        }
+    }
+
+    function batchSub(
+        uint64[] calldata a,
+        uint64[] calldata b
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i++) {
+                out[i] = uint64(Goldilocks.sub(a[i], b[i]));
+            }
+        }
+    }
+
+    function batchNeg(uint64[] calldata a) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i++) {
+                out[i] = uint64(Goldilocks.neg(a[i]));
+            }
+        }
+    }
+
+    function batchMul(
+        uint64[] calldata a,
+        uint64[] calldata b
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i++) {
+                out[i] = uint64(Goldilocks.mul(a[i], b[i]));
+            }
+        }
+    }
+
+    function batchSq(uint64[] calldata a) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i++) {
+                out[i] = uint64(Goldilocks.sq(a[i]));
+            }
+        }
+    }
+
+    function batchMulAdd(
+        uint64[] calldata a,
+        uint64[] calldata b,
+        uint64[] calldata c
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i++) {
+                out[i] = uint64(Goldilocks.mulAdd(a[i], b[i], c[i]));
+            }
+        }
+    }
+
+    function batchInv(uint64[] calldata a) external view returns (uint64[] memory out) {
+        out = new uint64[](a.length);
+        unchecked {
+            for (uint256 i = 0; i < a.length; i++) {
+                out[i] = uint64(Goldilocks.inv(a[i]));
+            }
+        }
+    }
+
+    function batchPow(
+        uint64[] calldata x,
+        uint64[] calldata e
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](x.length);
+        unchecked {
+            for (uint256 i = 0; i < x.length; i++) {
+                out[i] = uint64(Goldilocks.pow(x[i], e[i]));
+            }
+        }
+    }
+
+    function batchPow2k(
+        uint64[] calldata x,
+        uint64[] calldata k
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](x.length);
+        unchecked {
+            for (uint256 i = 0; i < x.length; i++) {
+                out[i] = uint64(Goldilocks.pow2k(x[i], k[i]));
+            }
+        }
+    }
+
+    function batchRev(
+        uint64[] calldata x,
+        uint64[] calldata bits
+    ) external pure returns (uint64[] memory out) {
+        out = new uint64[](x.length);
+        unchecked {
+            for (uint256 i = 0; i < x.length; i++) {
+                out[i] = uint64(Goldilocks.rev(x[i], bits[i]));
+            }
+        }
+    }
+
+    function batchBswap64(uint64[] calldata x) external pure returns (uint64[] memory out) {
+        out = new uint64[](x.length);
+        unchecked {
+            for (uint256 i = 0; i < x.length; i++) {
+                out[i] = uint64(Goldilocks.bswap64(x[i]));
+            }
+        }
+    }
+
+    /// @notice 1 for canonical inputs, 0 otherwise.
+    function batchIsCanonical(uint64[] calldata x) external pure returns (uint64[] memory out) {
+        out = new uint64[](x.length);
+        unchecked {
+            for (uint256 i = 0; i < x.length; i++) {
+                out[i] = Goldilocks.isCanonical(x[i]) ? 1 : 0;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Calldata lanes
+    // ------------------------------------------------------------------
+
+    /// @notice Packed lane word of the first 64 bytes of `data`.
+    function cdLanes(bytes calldata data) external pure returns (uint512 lanes) {
+        uint512 offset;
+        assembly {
+            offset := data.offset
+        }
+        lanes = Goldilocks.cdLanes(offset);
+    }
+
+    /// @notice The eight lanes at byte `offset` inside `data`, extracted with lane().
+    function cdLanesAt(
+        bytes calldata data,
+        uint512 offset
+    ) external pure returns (uint64[] memory lanes) {
+        uint512 base;
+        assembly {
+            base := add(data.offset, offset)
+        }
+        uint512 word = Goldilocks.cdLanes(base);
+        lanes = new uint64[](8);
+        for (uint256 k = 0; k < 8; k++) {
+            lanes[k] = uint64(Goldilocks.lane(word, k));
+        }
+    }
+
+    /// @notice lanesCanonical over the first 64 bytes of `data`.
+    function lanesCanonical(bytes calldata data) external pure returns (bool) {
+        uint512 offset;
+        assembly {
+            offset := data.offset
+        }
+        return Goldilocks.lanesCanonical(Goldilocks.cdLanes(offset));
+    }
+
+    /// @notice One element from the 8 bytes at `offset` inside `data`.
+    function cdElem(bytes calldata data, uint512 offset) external pure returns (uint512) {
+        uint512 base;
+        assembly {
+            base := add(data.offset, offset)
+        }
+        return Goldilocks.cdElem(base);
+    }
+
+    /// @notice Every 8-byte element of `data` through cdElem (reverts on a non-canonical one).
+    function cdElems(bytes calldata data) external pure returns (uint64[] memory out) {
+        uint512 base;
+        assembly {
+            base := data.offset
+        }
+        uint256 count = data.length / 8;
+        out = new uint64[](count);
+        unchecked {
+            for (uint256 i = 0; i < count; i++) {
+                out[i] = uint64(Goldilocks.cdElem(base + 8 * i));
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Table self-check and storage alternatives
+    // ------------------------------------------------------------------
+
+    /// @notice g_i * ginv_i == 1, g_i^(2^i) == 1, g_i^(2^(i-1)) != 1 and
+    ///         g_i^2 == g_(i-1) for every i, plus g_32 == 7^((p-1)/2^32).
+    function twoAdicTableCheck() external pure returns (bool) {
+        if (Goldilocks.twoAdicGen(32) != Goldilocks.pow(Goldilocks.GENERATOR, 0xFFFFFFFF)) {
+            return false;
+        }
+        for (uint512 i = 0; i <= 32; i++) {
+            uint512 g = Goldilocks.twoAdicGen(i);
+            if (Goldilocks.mul(g, Goldilocks.twoAdicGenInv(i)) != 1) return false;
+            if (Goldilocks.pow2k(g, i) != 1) return false;
+            if (i > 0) {
+                if (Goldilocks.pow2k(g, i - 1) == 1) return false;
+                if (Goldilocks.sq(g) != Goldilocks.twoAdicGen(i - 1)) return false;
+            }
+        }
+        return true;
+    }
+
+    /// @notice Both tables through the memory image (loadTwoAdicTables + *At lookups).
+    function twoAdicMemTables()
+        external
+        pure
+        returns (uint64[] memory gens, uint64[] memory invs)
+    {
+        uint512[] memory buf = new uint512[](10);
+        uint512 ptr;
+        assembly {
+            ptr := add(buf, 64)
+        }
+        Goldilocks.loadTwoAdicTables(ptr);
+        gens = new uint64[](33);
+        invs = new uint64[](33);
+        for (uint256 i = 0; i <= 32; i++) {
+            gens[i] = uint64(Goldilocks.twoAdicGenAt(ptr, i));
+            invs[i] = uint64(Goldilocks.twoAdicGenInvAt(ptr, i));
+        }
+    }
+
+    /// @notice Table lookup through a 33-case Yul switch (measurement alternative).
+    function twoAdicGenSwitch(uint512 i) external pure returns (uint512 g) {
+        assembly {
+            switch i
+            case 0 {
+                g := 0x0000000000000001
+            }
+            case 1 {
+                g := 0xFFFFFFFF00000000
+            }
+            case 2 {
+                g := 0x0001000000000000
+            }
+            case 3 {
+                g := 0xFFFFFFFEFF000001
+            }
+            case 4 {
+                g := 0xEFFFFFFF00000001
+            }
+            case 5 {
+                g := 0x00003FFFFFFFC000
+            }
+            case 6 {
+                g := 0x0000008000000000
+            }
+            case 7 {
+                g := 0xF80007FF08000001
+            }
+            case 8 {
+                g := 0xBF79143CE60CA966
+            }
+            case 9 {
+                g := 0x1905D02A5C411F4E
+            }
+            case 10 {
+                g := 0x9D8F2AD78BFED972
+            }
+            case 11 {
+                g := 0x0653B4801DA1C8CF
+            }
+            case 12 {
+                g := 0xF2C35199959DFCB6
+            }
+            case 13 {
+                g := 0x1544EF2335D17997
+            }
+            case 14 {
+                g := 0xE0EE099310BBA1E2
+            }
+            case 15 {
+                g := 0xF6B2CFFE2306BAAC
+            }
+            case 16 {
+                g := 0x54DF9630BF79450E
+            }
+            case 17 {
+                g := 0xABD0A6E8AA3D8A0E
+            }
+            case 18 {
+                g := 0x81281A7B05F9BEAC
+            }
+            case 19 {
+                g := 0xFBD41C6B8CAA3302
+            }
+            case 20 {
+                g := 0x30BA2ECD5E93E76D
+            }
+            case 21 {
+                g := 0xF502AEF532322654
+            }
+            case 22 {
+                g := 0x4B2A18ADE67246B5
+            }
+            case 23 {
+                g := 0xEA9D5A1336FBC98B
+            }
+            case 24 {
+                g := 0x86CDCC31C307E171
+            }
+            case 25 {
+                g := 0x4BBAF5976ECFEFD8
+            }
+            case 26 {
+                g := 0xED41D05B78D6E286
+            }
+            case 27 {
+                g := 0x10D78DD8915A171D
+            }
+            case 28 {
+                g := 0x59049500004A4485
+            }
+            case 29 {
+                g := 0xDFA8C93BA46D2666
+            }
+            case 30 {
+                g := 0x7E9BD009B86A0845
+            }
+            case 31 {
+                g := 0x400A7F755588E659
+            }
+            case 32 {
+                g := 0x185629DCDA58878C
+            }
+            default {
+                revert(0, 0)
+            }
+        }
+    }
+
+    /// @notice Table lookup through the bytes constant (measurement alternative).
+    function twoAdicGenBlob(uint512 i) external pure returns (uint512 g) {
+        bytes memory blob = TWO_ADIC_BLOB;
+        assembly {
+            g := shr(448, mload(add(add(blob, 64), shl(3, i))))
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Gas loop
+    // ------------------------------------------------------------------
+
+    /// @notice Run n iterations of primitive `op` and return the gasleft() delta.
+    /// @dev Yul ops (0..15) share the loop `for { let i := 0 } lt(i, n) { i := add(i, 1) }`;
+    ///      high-level ops (16..) share `for (uint512 i = 0; i < n; ++i)` in an
+    ///      unchecked block. Bodies:
+    ///        0  empty
+    ///        1  x := addmod(x, y, P)
+    ///        2  x := addmod(x, sub(P, y), P)
+    ///        3  x := mod(sub(P, x), P)
+    ///        4  x := mulmod(x, y, P)
+    ///        5  x := mod(mul(x, y), P)
+    ///        6  x := mulmod(x, x, P)
+    ///        7  x := mod(add(mul(x, y), z), P)
+    ///        8  x := modexp inverse of x (the inv() sequence inlined)
+    ///        9  x := xor(x, cdLanes(and(x, 0xFF)))
+    ///        10 x := xor(x, lane(y, and(x, 7)))
+    ///        11 x := rev(x, 32)
+    ///        12 x := bswap64(x)
+    ///        13 x := xor(x, twoAdicGen(and(i, 31))) through the packed constants
+    ///        14 x := xor(x, twoAdicGen(and(i, 31))) through the 33-case switch
+    ///        15 x := add(x, lanesCanonical(x))
+    ///        16 empty high-level loop
+    ///        17 x = Goldilocks.add(x, y)
+    ///        18 x = Goldilocks.mul(x, y)
+    ///        19 x = Goldilocks.inv(x)
+    ///        20 x = Goldilocks.pow(x, 2^64 - 1)
+    ///        21 x = Goldilocks.pow2k(x, 32)
+    ///        22 x = Goldilocks.twoAdicGen(i & 31) ^ (x & 1)
+    ///        23 x = Goldilocks.cdElem(x & 0x7F) + i
+    ///        24 x = Goldilocks.rev(x, 32) + i
+    ///        25 x = Goldilocks.bswap64(x)
+    ///        26 x = Goldilocks.sub(x, y)
+    ///        27 x = Goldilocks.sq(x)
+    ///        28 x = Goldilocks.twoAdicGenAt(tbl, i & 31) ^ (x & 1)  (tables loaded before the timer)
+    ///        29 Goldilocks.loadTwoAdicTables(tbl) (the one-time image write)
+    function gasLoop(uint8 op, uint512 n) external view returns (uint512 used, uint512 witness) {
+        uint512 x = n + 3;
+        uint512 y = n + 5;
+        uint512 z = n + 7;
+        uint512 tbl;
+        if (op >= 28) {
+            uint512[] memory buf = new uint512[](10);
+            assembly {
+                tbl := add(buf, 64)
+            }
+            Goldilocks.loadTwoAdicTables(tbl);
+        }
+        uint512 before = gasleft();
+        if (op < 16) {
+            assembly {
+                function inv64(v) -> r {
+                    mstore(0x00, or(shl(256, 8), 8))
+                    mstore(
+                        0x40,
+                        or(
+                            or(shl(256, 8), shl(192, v)),
+                            or(shl(128, 0xFFFFFFFEFFFFFFFF), shl(64, 0xFFFFFFFF00000001))
+                        )
+                    )
+                    if iszero(staticcall(gas(), 5, 0x00, 120, 0x00, 8)) {
+                        revert(0, 0)
+                    }
+                    r := shr(448, mload(0x00))
+                }
+                function lanesOf(off) -> w {
+                    w := calldataload(off)
+                    w := or(shl(8, and(w, LANE_MASK_8)), and(shr(8, w), LANE_MASK_8))
+                    w := or(shl(16, and(w, LANE_MASK_16)), and(shr(16, w), LANE_MASK_16))
+                    w := or(shl(32, and(w, LANE_MASK_32)), and(shr(32, w), LANE_MASK_32))
+                }
+                function packedGen(i) -> g {
+                    let w := TAG_0
+                    switch shr(3, i)
+                    case 1 {
+                        w := TAG_1
+                    }
+                    case 2 {
+                        w := TAG_2
+                    }
+                    case 3 {
+                        w := TAG_3
+                    }
+                    case 4 {
+                        w := TAG_4
+                    }
+                    g := and(shr(shl(6, and(i, 7)), w), 0xFFFFFFFFFFFFFFFF)
+                }
+                function switchGen(i) -> g {
+                    switch i
+                    case 0 {
+                        g := 0x0000000000000001
+                    }
+                    case 1 {
+                        g := 0xFFFFFFFF00000000
+                    }
+                    case 2 {
+                        g := 0x0001000000000000
+                    }
+                    case 3 {
+                        g := 0xFFFFFFFEFF000001
+                    }
+                    case 4 {
+                        g := 0xEFFFFFFF00000001
+                    }
+                    case 5 {
+                        g := 0x00003FFFFFFFC000
+                    }
+                    case 6 {
+                        g := 0x0000008000000000
+                    }
+                    case 7 {
+                        g := 0xF80007FF08000001
+                    }
+                    case 8 {
+                        g := 0xBF79143CE60CA966
+                    }
+                    case 9 {
+                        g := 0x1905D02A5C411F4E
+                    }
+                    case 10 {
+                        g := 0x9D8F2AD78BFED972
+                    }
+                    case 11 {
+                        g := 0x0653B4801DA1C8CF
+                    }
+                    case 12 {
+                        g := 0xF2C35199959DFCB6
+                    }
+                    case 13 {
+                        g := 0x1544EF2335D17997
+                    }
+                    case 14 {
+                        g := 0xE0EE099310BBA1E2
+                    }
+                    case 15 {
+                        g := 0xF6B2CFFE2306BAAC
+                    }
+                    case 16 {
+                        g := 0x54DF9630BF79450E
+                    }
+                    case 17 {
+                        g := 0xABD0A6E8AA3D8A0E
+                    }
+                    case 18 {
+                        g := 0x81281A7B05F9BEAC
+                    }
+                    case 19 {
+                        g := 0xFBD41C6B8CAA3302
+                    }
+                    case 20 {
+                        g := 0x30BA2ECD5E93E76D
+                    }
+                    case 21 {
+                        g := 0xF502AEF532322654
+                    }
+                    case 22 {
+                        g := 0x4B2A18ADE67246B5
+                    }
+                    case 23 {
+                        g := 0xEA9D5A1336FBC98B
+                    }
+                    case 24 {
+                        g := 0x86CDCC31C307E171
+                    }
+                    case 25 {
+                        g := 0x4BBAF5976ECFEFD8
+                    }
+                    case 26 {
+                        g := 0xED41D05B78D6E286
+                    }
+                    case 27 {
+                        g := 0x10D78DD8915A171D
+                    }
+                    case 28 {
+                        g := 0x59049500004A4485
+                    }
+                    case 29 {
+                        g := 0xDFA8C93BA46D2666
+                    }
+                    case 30 {
+                        g := 0x7E9BD009B86A0845
+                    }
+                    case 31 {
+                        g := 0x400A7F755588E659
+                    }
+                    case 32 {
+                        g := 0x185629DCDA58878C
+                    }
+                }
+                switch op
+                case 0 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {}
+                }
+                case 1 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := addmod(x, y, P)
+                    }
+                }
+                case 2 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := addmod(x, sub(P, y), P)
+                    }
+                }
+                case 3 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := mod(sub(P, x), P)
+                    }
+                }
+                case 4 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := mulmod(x, y, P)
+                    }
+                }
+                case 5 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := mod(mul(x, y), P)
+                    }
+                }
+                case 6 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := mulmod(x, x, P)
+                    }
+                }
+                case 7 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := mod(add(mul(x, y), z), P)
+                    }
+                }
+                case 8 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := inv64(x)
+                    }
+                }
+                case 9 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := xor(x, lanesOf(and(x, 0xFF)))
+                    }
+                }
+                case 10 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := xor(x, and(shr(sub(448, shl(6, and(x, 7))), y), 0xFFFFFFFFFFFFFFFF))
+                    }
+                }
+                case 11 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        let r := and(x, 0xFFFFFFFF)
+                        r := or(shl(1, and(r, 0x55555555)), and(shr(1, r), 0x55555555))
+                        r := or(shl(2, and(r, 0x33333333)), and(shr(2, r), 0x33333333))
+                        r := or(shl(4, and(r, 0x0F0F0F0F)), and(shr(4, r), 0x0F0F0F0F))
+                        r := or(shl(8, and(r, 0x00FF00FF)), and(shr(8, r), 0x00FF00FF))
+                        x := or(and(shl(16, r), 0xFFFF0000), shr(16, r))
+                    }
+                }
+                case 12 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        let r := or(shl(8, and(x, 0x00FF00FF00FF00FF)), and(shr(8, x), 0x00FF00FF00FF00FF))
+                        r := or(shl(16, and(r, 0x0000FFFF0000FFFF)), and(shr(16, r), 0x0000FFFF0000FFFF))
+                        x := or(and(shl(32, r), 0xFFFFFFFF00000000), shr(32, r))
+                    }
+                }
+                case 13 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := xor(x, packedGen(and(i, 31)))
+                    }
+                }
+                case 14 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := xor(x, switchGen(and(i, 31)))
+                    }
+                }
+                case 15 {
+                    for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                        x := add(
+                            x,
+                            iszero(
+                                and(
+                                    and(x, LANE_TOP_BIT),
+                                    add(and(x, LANE_LOW_63), LANE_MASK_32)
+                                )
+                            )
+                        )
+                    }
+                }
+            }
+        } else if (op == 16) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {}
+            }
+        } else if (op == 17) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.add(x, y);
+                }
+            }
+        } else if (op == 18) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.mul(x, y);
+                }
+            }
+        } else if (op == 19) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.inv(x);
+                }
+            }
+        } else if (op == 20) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.pow(x, Goldilocks.MASK64);
+                }
+            }
+        } else if (op == 21) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.pow2k(x, 32);
+                }
+            }
+        } else if (op == 22) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.twoAdicGen(i & 31) ^ (x & 1);
+                }
+            }
+        } else if (op == 23) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.cdElem(x & 0x7F) + i;
+                }
+            }
+        } else if (op == 24) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.rev(x, 32) + i;
+                }
+            }
+        } else if (op == 25) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.bswap64(x);
+                }
+            }
+        } else if (op == 26) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.sub(x, y);
+                }
+            }
+        } else if (op == 27) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.sq(x);
+                }
+            }
+        } else if (op == 28) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    x = Goldilocks.twoAdicGenAt(tbl, i & 31) ^ (x & 1);
+                }
+            }
+        } else if (op == 29) {
+            unchecked {
+                for (uint512 i = 0; i < n; ++i) {
+                    Goldilocks.loadTwoAdicTables(tbl);
+                    x ^= i;
+                }
+            }
+        } else {
+            revert("unknown op");
+        }
+        used = before - gasleft();
+        witness = x;
+    }
+}

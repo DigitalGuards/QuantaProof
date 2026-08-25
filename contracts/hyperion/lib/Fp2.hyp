@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "./Goldilocks.hyp";
+
+/// @title Fp2
+/// @notice The quadratic extension Fp[X] / (X^2 - 7) of the Goldilocks field
+///         (Plonky3 BinomialExtensionField<Goldilocks, 2>, W = 7).
+/// @dev An element a = a0 + a1 X is passed and returned as two canonical
+///      uint512 values (c0, c1). Memory arrays of elements (batchInverse) use
+///      one 64-byte slot per component, so element j occupies bytes
+///      [128 j, 128 j + 128) with c0 first. Products use lazy reduction: every
+///      component is a sum of at most two 128-bit products (one scaled by 7),
+///      reduced with a single `mod`. Inversion multiplies by the conjugate:
+///      1 / a = (a0 - a1 X) / (a0^2 - 7 a1^2), with the norm inverted once in
+///      the base field through Goldilocks.inv (modexp precompile). batchInverse
+///      applies Montgomery's trick to the norms, so a batch of any size costs
+///      one precompile call plus a handful of base field mulmod per element.
+library Fp2 {
+    /// @notice The non-residue defining the extension: X^2 = W.
+    uint512 internal constant W = 7;
+    /// @dev Literal copy of Goldilocks.P: Yul accepts only direct number constants.
+    uint512 internal constant P = 0xFFFFFFFF00000001;
+
+    /// @notice Lift a base field element: (x, 0).
+    function fromBase(uint512 x) internal pure returns (uint512 c0, uint512 c1) {
+        c0 = x;
+        c1 = 0;
+    }
+
+    /// @notice Component-wise equality.
+    function equal(uint512 a0, uint512 a1, uint512 b0, uint512 b1) internal pure returns (bool) {
+        return a0 == b0 && a1 == b1;
+    }
+
+    /// @notice a + b.
+    function add(
+        uint512 a0,
+        uint512 a1,
+        uint512 b0,
+        uint512 b1
+    ) internal pure returns (uint512 c0, uint512 c1) {
+        assembly {
+            c0 := addmod(a0, b0, P)
+            c1 := addmod(a1, b1, P)
+        }
+    }
+
+    /// @notice a - b.
+    function sub(
+        uint512 a0,
+        uint512 a1,
+        uint512 b0,
+        uint512 b1
+    ) internal pure returns (uint512 c0, uint512 c1) {
+        assembly {
+            c0 := addmod(a0, sub(P, b0), P)
+            c1 := addmod(a1, sub(P, b1), P)
+        }
+    }
+
+    /// @notice -a.
+    function neg(uint512 a0, uint512 a1) internal pure returns (uint512 c0, uint512 c1) {
+        assembly {
+            c0 := mod(sub(P, a0), P)
+            c1 := mod(sub(P, a1), P)
+        }
+    }
+
+    /// @notice a * b = (a0 b0 + 7 a1 b1) + (a0 b1 + a1 b0) X.
+    function mul(
+        uint512 a0,
+        uint512 a1,
+        uint512 b0,
+        uint512 b1
+    ) internal pure returns (uint512 c0, uint512 c1) {
+        assembly {
+            c0 := mod(add(mul(a0, b0), mul(W, mul(a1, b1))), P)
+            c1 := mod(add(mul(a0, b1), mul(a1, b0)), P)
+        }
+    }
+
+    /// @notice a^2 = (a0^2 + 7 a1^2) + 2 a0 a1 X.
+    function sq(uint512 a0, uint512 a1) internal pure returns (uint512 c0, uint512 c1) {
+        assembly {
+            c0 := mod(add(mul(a0, a0), mul(W, mul(a1, a1))), P)
+            c1 := mod(shl(1, mul(a0, a1)), P)
+        }
+    }
+
+    /// @notice a * b for a base field scalar b.
+    function mulBase(
+        uint512 a0,
+        uint512 a1,
+        uint512 b
+    ) internal pure returns (uint512 c0, uint512 c1) {
+        assembly {
+            c0 := mulmod(a0, b, P)
+            c1 := mulmod(a1, b, P)
+        }
+    }
+
+    /// @notice The norm a0^2 - 7 a1^2 (a base field element, zero only for a = 0
+    ///         because 7 is a quadratic non-residue).
+    function norm(uint512 a0, uint512 a1) internal pure returns (uint512 n) {
+        assembly {
+            // a1 * (p - a1) is -a1^2 without a separate reduction.
+            n := mod(add(mul(a0, a0), mul(W, mul(a1, sub(P, a1)))), P)
+        }
+    }
+
+    /// @notice 1 / a; reverts through Goldilocks.inv (ZeroInverse) for a = 0.
+    function inv(uint512 a0, uint512 a1) internal view returns (uint512 c0, uint512 c1) {
+        uint512 nInv = Goldilocks.inv(norm(a0, a1));
+        assembly {
+            c0 := mulmod(a0, nInv, P)
+            c1 := mulmod(sub(P, a1), nInv, P)
+        }
+    }
+
+    /// @notice a^e by square-and-multiply (e < 2^64 keeps it to 64 rounds).
+    function pow(uint512 a0, uint512 a1, uint512 e) internal pure returns (uint512 r0, uint512 r1) {
+        assembly {
+            r0 := 1
+            r1 := 0
+            for {} e {} {
+                if and(e, 1) {
+                    let t0 := mod(add(mul(r0, a0), mul(W, mul(r1, a1))), P)
+                    r1 := mod(add(mul(r0, a1), mul(r1, a0)), P)
+                    r0 := t0
+                }
+                let s0 := mod(add(mul(a0, a0), mul(W, mul(a1, a1))), P)
+                a1 := mod(shl(1, mul(a0, a1)), P)
+                a0 := s0
+                e := shr(1, e)
+            }
+        }
+    }
+
+    /// @notice Invert `count` elements in place at memory `ptr` (128 bytes each,
+    ///         c0 then c1) with one base field inversion.
+    /// @dev 1 / a = conj(a) / norm(a) and the norm is a base field element, so
+    ///      Montgomery's trick runs over the norms in the base field (one
+    ///      mulmod per element in each pass) instead of over the extension
+    ///      elements (an extension product costs about five times more). Per
+    ///      element: one norm, three base mulmod for the prefix products and
+    ///      the shared inverse, two mulmod to scale the conjugate. Norms and
+    ///      prefix products go to fresh memory taken from the free memory
+    ///      pointer (128 bytes per element). A zero element makes the norm
+    ///      product zero and the single inversion reverts with ZeroInverse().
+    ///      count == 0 is a no-op.
+    function batchInverse(uint512 ptr, uint512 count) internal view {
+        if (count == 0) return;
+        uint512 acc;
+        uint512 scratch;
+        assembly {
+            // Forward pass: scratch holds (norm_j, prefix_j) per element where
+            // prefix_j is the product of the norms before j; acc ends as the
+            // product of every norm.
+            scratch := mload(0x80)
+            mstore(0x80, add(scratch, shl(7, count)))
+            acc := 1
+            let s := scratch
+            let end := add(ptr, shl(7, count))
+            for { let q := ptr } lt(q, end) { q := add(q, 128) } {
+                let a0 := mload(q)
+                let a1 := mload(add(q, 64))
+                let nrm := mod(add(mul(a0, a0), mul(W, mul(a1, sub(P, a1)))), P)
+                mstore(s, nrm)
+                mstore(add(s, 64), acc)
+                acc := mulmod(acc, nrm, P)
+                s := add(s, 128)
+            }
+        }
+        acc = Goldilocks.inv(acc);
+        assembly {
+            // Backward pass: 1 / norm_j = acc * prefix_j, then acc *= norm_j;
+            // the element becomes conj(a) / norm.
+            let s := add(scratch, shl(7, count))
+            for { let q := add(ptr, shl(7, count)) } gt(q, ptr) {} {
+                q := sub(q, 128)
+                s := sub(s, 128)
+                let nInv := mulmod(acc, mload(add(s, 64)), P)
+                acc := mulmod(acc, mload(s), P)
+                mstore(q, mulmod(mload(q), nInv, P))
+                mstore(add(q, 64), mulmod(sub(P, mload(add(q, 64))), nInv, P))
+            }
+        }
+    }
+}

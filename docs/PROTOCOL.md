@@ -23,33 +23,33 @@ deviation.
 
 ### 1.1 Configuration (rc.1 item names)
 
-| Role | rc.1 type (all `pub`) | Plan name |
-|---|---|---|
-| `Val` | `p3_goldilocks::Goldilocks` | same |
-| `Challenge` | `p3_field::extension::BinomialExtensionField<Goldilocks, 2>` | same |
-| byte hash | `p3_keccak::Keccak256Hash` | same |
-| `FieldHash` | `p3_symmetric::SerializingHasher<Keccak256Hash>` | same |
-| `Compress` | `p3_symmetric::CompressionFunctionFromHasher<Keccak256Hash, 2, 32>` | same |
-| `ValMmcs` | `p3_merkle_tree::MerkleTreeMmcs<Goldilocks, u8, FieldHash, Compress, 2, 32>`, constructed with `MerkleTreeMmcs::new(hash, compress, 0)` (third argument = cap height 0) | same |
-| `ChallengeMmcs` | `p3_commit::ExtensionMmcs<Val, Challenge, ValMmcs>` | same |
-| `Challenger` | `p3_challenger::SerializingChallenger64<Goldilocks, HashChallenger<u8, Keccak256Hash, 32>>` with an empty initial state (`HashChallenger::new(vec![], Keccak256Hash)`) | same |
-| `Dft` | `p3_dft::Radix2DitParallel<Goldilocks>` | same |
-| `Pcs` | `p3_fri::TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>` | same |
-| `Config` | `p3_uni_stark::StarkConfig<Pcs, Challenge, Challenger>` | same |
-| FRI parameters | `p3_fri::FriParameters { log_blowup, log_final_poly_len, max_log_arity, num_queries, commit_proof_of_work_bits, query_proof_of_work_bits, mmcs }` (`p3-fri/src/config.rs:10-23`) | `query_pow` = `query_proof_of_work_bits`, `commit_pow` = `commit_proof_of_work_bits` |
+| Role            | rc.1 type (all `pub`)                                                                                                                                                            | Plan name                                                                            |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `Val`           | `p3_goldilocks::Goldilocks`                                                                                                                                                      | same                                                                                 |
+| `Challenge`     | `p3_field::extension::BinomialExtensionField<Goldilocks, 2>`                                                                                                                     | same                                                                                 |
+| byte hash       | `p3_keccak::Keccak256Hash`                                                                                                                                                       | same                                                                                 |
+| `FieldHash`     | `p3_symmetric::SerializingHasher<Keccak256Hash>`                                                                                                                                 | same                                                                                 |
+| `Compress`      | `p3_symmetric::CompressionFunctionFromHasher<Keccak256Hash, 2, 32>`                                                                                                              | same                                                                                 |
+| `ValMmcs`       | `p3_merkle_tree::MerkleTreeMmcs<Goldilocks, u8, FieldHash, Compress, 2, 32>`, constructed with `MerkleTreeMmcs::new(hash, compress, 0)` (third argument = cap height 0)          | same                                                                                 |
+| `ChallengeMmcs` | `p3_commit::ExtensionMmcs<Val, Challenge, ValMmcs>`                                                                                                                              | same                                                                                 |
+| `Challenger`    | `p3_challenger::SerializingChallenger64<Goldilocks, HashChallenger<u8, Keccak256Hash, 32>>` with an empty initial state (`HashChallenger::new(vec![], Keccak256Hash)`)           | same                                                                                 |
+| `Dft`           | `p3_dft::Radix2DitParallel<Goldilocks>`                                                                                                                                          | same                                                                                 |
+| `Pcs`           | `p3_fri::TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>`                                                                                                                        | same                                                                                 |
+| `Config`        | `p3_uni_stark::StarkConfig<Pcs, Challenge, Challenger>`                                                                                                                          | same                                                                                 |
+| FRI parameters  | `p3_fri::FriParameters { log_blowup, log_final_poly_len, max_log_arity, num_queries, commit_proof_of_work_bits, query_proof_of_work_bits, mmcs }` (`p3-fri/src/config.rs:10-23`) | `query_pow` = `query_proof_of_work_bits`, `commit_pow` = `commit_proof_of_work_bits` |
 
 The tooling wraps the inner `HashChallenger` in a byte-transparent `LoggingChallenger` that
 forwards every byte unchanged; proofs and transcripts are identical with and without it.
 
 ### 1.2 Presets
 
-| Preset | log_blowup | Q | query PoW bits | commit PoW bits | max_log_arity | log_final_poly_len |
-|---|---|---|---|---|---|---|
-| c1 | 1 | 100 | 16 | 0 | 3 | 3 |
-| c2 | 2 | 50 | 16 | 0 | 3 | 3 |
-| c3 | 3 | 34 | 16 | 0 | 3 | 3 |
-| c1-binary, c2-binary, c3-binary | as above | as above | 16 | 0 | 1 | 3 |
-| c3-a{k}-f{l} | 3 | 34 | 16 | 0 | k in {1,2,3,4} | l in {0,3,5} |
+| Preset                          | log_blowup | Q        | query PoW bits | commit PoW bits | max_log_arity  | log_final_poly_len |
+| ------------------------------- | ---------- | -------- | -------------- | --------------- | -------------- | ------------------ |
+| c1                              | 1          | 100      | 16             | 0               | 3              | 3                  |
+| c2                              | 2          | 50       | 16             | 0               | 3              | 3                  |
+| c3                              | 3          | 34       | 16             | 0               | 3              | 3                  |
+| c1-binary, c2-binary, c3-binary | as above   | as above | 16             | 0               | 1              | 3                  |
+| c3-a{k}-f{l}                    | 3          | 34       | 16             | 0               | k in {1,2,3,4} | l in {0,3,5}       |
 
 `c3-a3-f3` is `c3` and `c3-a1-f3` is `c3-binary`; the sweep therefore adds ten distinct cells.
 
@@ -137,7 +137,7 @@ Fibonacci AIR (width 2, three public values, one quotient chunk).
     `trace_local` (2 EF), `trace_next` (2 EF), `quotient_chunk` (2 EF): 96 bytes
 11. sample `fri_alpha` (EF, `p3-fri/src/verifier.rs:195`)
 12. for each round `r = 0..R`: observe `fri_commit[r]` (32 bytes); `check_witness(commit_pow_bits,
-    commit_pow_witness[r])`; sample `beta[r]` (EF) (`verifier.rs:292-306`)
+commit_pow_witness[r])`; sample `beta[r]` (EF) (`verifier.rs:292-306`)
 13. require `final_poly.len() == 2^lf` and observe `final_poly[0..2^lf]` (EF each, `verifier.rs:308-317`)
 14. for each round: observe `F(log_arity[r])` (`verifier.rs:319-322`)
 15. `check_witness(query_pow_bits, query_pow_witness)` (`verifier.rs:324-327`, `PowFailed`): with
@@ -247,13 +247,13 @@ form (`arity_r * 16` bytes).
 - Every tree here is a full binary tree of `2^h` leaves: `N = 2`, one matrix per commitment,
   so the arity schedule is all 2s and no injection layer exists (`merkle_tree.rs:229-244`,
   `473-481`). Cap height 0: the commitment is the single root (`MerkleCap` with one entry,
-  `mmcs/mod.rs:786-791`).
+  `mmcs/mod.rs:767-773`).
 - Multi-opening (`Mmcs::verify_multi_batch`, `mmcs/batch.rs:287-296` delegating to
-  `verify_batch_pruned`, `mmcs/mod.rs:450-794`):
+  `verify_batch_pruned`, `mmcs/mod.rs:450-777`):
   1. `sorted_unique` = the query indices sorted ascending with duplicates removed
-     (`mmcs/mod.rs:527-530`). The representative of a duplicated leaf is the first query (in
+     (`mmcs/mod.rs:510-513`). The representative of a duplicated leaf is the first query (in
      query order) that opens it; every other query opening the same leaf must carry an identical
-     row, otherwise `DuplicateOpeningMismatch` (`mmcs/mod.rs:545-558`). This check runs before
+     row, otherwise `DuplicateOpeningMismatch` (`mmcs/mod.rs:528-541`). This check runs before
      any hashing.
   2. Frontier walk (`p3-merkle-tree/src/pruning.rs:130-176`, used by both `prune_paths` and
      `restore_paths`): starting from the sorted unique leaves, process each level from the
@@ -266,7 +266,7 @@ form (`arity_r * 16` bytes).
      also runs before hashing.
   4. Hash walk: leaf digests for the unique leaves, then per level `keccak256(left || right)`;
      the single surviving digest must equal the root, otherwise `MerkleRootMismatch`
-     (`mmcs/mod.rs:648-712`, `786-791`).
+     (`mmcs/mod.rs:631-703`, `767-773`).
 - The verifier supplies the indices from its own transcript; the proof stores no indices.
 
 ## 10. Constraint evaluation at `zeta`
@@ -308,22 +308,22 @@ field elements (little-endian) except `sib_count`, which is a big-endian u16.
 
 ### 11.1 Transcript prefix
 
-| Offset | Size | Field |
-|---|---|---|
-| 0 | 1 | `version = 0x01` |
-| 1 | 1 | `degree_bits = n` |
-| 2 | 1 | `num_rounds = R` |
-| 3 | R | `log_arity[0..R]` (one byte each) |
-| 3 + R | 32 | `trace_root` |
-| 35 + R | 32 | `quotient_root` |
-| 67 + R | 32 | `trace_local` (2 EF) |
-| 99 + R | 32 | `trace_next` (2 EF) |
-| 131 + R | 32 | `quotient_chunk` (2 EF: the two basis coefficients of the single chunk) |
-| 163 + R + 40 r | 32 | `fri_commit[r]` for `r = 0..R` |
-| 195 + R + 40 r | 8 | `commit_pow_witness[r]` (F) |
-| 163 + 41 R | 16 * 2^lf | `final_poly[0..2^lf]` (EF each, constant term first) |
-| 163 + 41 R + 16 * 2^lf | 8 | `query_pow_witness` (F) |
-| `pEnd = 171 + 41 R + 16 * 2^lf` | | end of the prefix |
+| Offset                          | Size      | Field                                                                   |
+| ------------------------------- | --------- | ----------------------------------------------------------------------- |
+| 0                               | 1         | `version = 0x01`                                                        |
+| 1                               | 1         | `degree_bits = n`                                                       |
+| 2                               | 1         | `num_rounds = R`                                                        |
+| 3                               | R         | `log_arity[0..R]` (one byte each)                                       |
+| 3 + R                           | 32        | `trace_root`                                                            |
+| 35 + R                          | 32        | `quotient_root`                                                         |
+| 67 + R                          | 32        | `trace_local` (2 EF)                                                    |
+| 99 + R                          | 32        | `trace_next` (2 EF)                                                     |
+| 131 + R                         | 32        | `quotient_chunk` (2 EF: the two basis coefficients of the single chunk) |
+| 163 + R + 40 r                  | 32        | `fri_commit[r]` for `r = 0..R`                                          |
+| 195 + R + 40 r                  | 8         | `commit_pow_witness[r]` (F)                                             |
+| 163 + 41 R                      | 16 * 2^lf | `final_poly[0..2^lf]` (EF each, constant term first)                    |
+| 163 + 41 R + 16 * 2^lf          | 8         | `query_pow_witness` (F)                                                 |
+| `pEnd = 171 + 41 R + 16 * 2^lf` |           | end of the prefix                                                       |
 
 `proofId = keccak256(proof[0..pEnd])`. Every transcript input of sections 5.1 to 5.15 except the
 public values lives in the prefix.
@@ -332,10 +332,10 @@ public values lives in the prefix.
 
 Immediately after the prefix, in this order:
 
-| Block | Content |
-|---|---|
-| trace batch | `rows[Q]` (each `F(row[0]) || F(row[1])`, 16 bytes) then `sib_count` (u16 BE) then `sib_count` digests of 32 bytes in frontier wire order |
-| quotient batch | same shape (`rows[Q]` of 16 bytes, `sib_count`, digests) |
+| Block                  | Content                                                                                                                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| trace batch            | `rows[Q]` (each `F(row[0])                                                                                                                                |     | F(row[1])`, 16 bytes) then `sib_count`(u16 BE) then`sib_count` digests of 32 bytes in frontier wire order |
+| quotient batch         | same shape (`rows[Q]` of 16 bytes, `sib_count`, digests)                                                                                                  |
 | round r (for r = 0..R) | `sibling_values[Q][arity_r - 1]` (EF each, per query the values at the positions other than the query's own, ascending) then `sib_count` then the digests |
 
 Offsets: `trace.rows = pEnd`; `trace.sib_count = pEnd + 16 Q`; `trace.siblings = trace.sib_count + 2`;
@@ -392,18 +392,18 @@ are unreachable by mutating a valid proof (they need a transcript output in a se
 
 ### 12.1 Mutation table (`test/vectors/mutations/`)
 
-| Mutation | Error |
-|---|---|
-| `bad_version` | `BadVersion` |
-| `degree_bits_plus_one`, `log_arity_zero`, `log_arity_too_large`, `drop_last_round` | `BadHeader` |
-| `append_byte`, `truncate_1`, `truncate_32`, `truncate_half`, `sib_count_field_plus_one` | `BadLength` |
-| `non_canonical_element` | `NonCanonicalElement` |
-| `flip_trace_local`, `flip_quotient_chunk`, `flip_trace_root`, `wrong_public_value` | `OodMismatch` (the constraint check runs before FRI; a changed trace root changes `alpha`) |
-| `flip_final_poly0`, `flip_fri_commit0`, `zero_query_pow_witness`, `zero_commit_pow_witness` (only with commit PoW bits > 0) | `PowFailed` (with probability `1 - 2^-16`; the vector records what the mirror raised) |
-| `duplicate_opening_mismatch` (only when two queries share a trace index) | `DuplicateOpeningMismatch` |
-| `sib_count_plus_one`, `sib_count_minus_one` (count and data changed together) | `SiblingCountMismatch` |
-| `flip_input_sibling`, `flip_round_sibling`, `swap_query_rows` | `MerkleRootMismatch` |
-| `flip_sibling_value` | `FinalPolyMismatch` |
+| Mutation                                                                                                                    | Error                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `bad_version`                                                                                                               | `BadVersion`                                                                               |
+| `degree_bits_plus_one`, `log_arity_zero`, `log_arity_too_large`, `drop_last_round`                                          | `BadHeader`                                                                                |
+| `append_byte`, `truncate_1`, `truncate_32`, `truncate_half`, `sib_count_field_plus_one`                                     | `BadLength`                                                                                |
+| `non_canonical_element`                                                                                                     | `NonCanonicalElement`                                                                      |
+| `flip_trace_local`, `flip_quotient_chunk`, `flip_trace_root`, `wrong_public_value`                                          | `OodMismatch` (the constraint check runs before FRI; a changed trace root changes `alpha`) |
+| `flip_final_poly0`, `flip_fri_commit0`, `zero_query_pow_witness`, `zero_commit_pow_witness` (only with commit PoW bits > 0) | `PowFailed` (with probability `1 - 2^-16`; the vector records what the mirror raised)      |
+| `duplicate_opening_mismatch` (only when two queries share a trace index)                                                    | `DuplicateOpeningMismatch`                                                                 |
+| `sib_count_plus_one`, `sib_count_minus_one` (count and data changed together)                                               | `SiblingCountMismatch`                                                                     |
+| `flip_input_sibling`, `flip_round_sibling`, `swap_query_rows`                                                               | `MerkleRootMismatch`                                                                       |
+| `flip_sibling_value`                                                                                                        | `FinalPolyMismatch`                                                                        |
 
 ## 13. Vector files
 
