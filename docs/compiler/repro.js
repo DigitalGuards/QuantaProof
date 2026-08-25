@@ -120,7 +120,7 @@ async function runMldsa(ctx, viaIr) {
 
   const seed = new Uint8Array(32).fill(1);
   const { publicKey, secretKey } = mldsa.generateKeypair(seed);
-  const message = utf8('QuantaProof hypc legacy codegen repro');
+  const message = utf8('QuantaStark hypc legacy codegen repro');
   const context = 'QP-REPRO-v1';
   const digest = mldsa.shake256Digest(message);
   const signature = mldsa.signDigest(digest, secretKey, context);

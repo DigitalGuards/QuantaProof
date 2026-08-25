@@ -12,7 +12,7 @@ developer node is validated and carries every measurement in
 
 The QNS precompile alignment (ML-DSA-87 verify at `0x03` with a 64-byte digest,
 SHAKE256 at `0x06`) is uncommitted in the `go-qrl` and `hyperion` checkouts
-while it waits for review and a QIP. QuantaProof never touches those trees. It
+while it waits for review and a QIP. QuantaStark never touches those trees. It
 builds from linked worktrees that carry one snapshot commit each:
 
 ```bash
@@ -195,7 +195,7 @@ chosen before the next start.
 
 ### Coexistence with the QNS composition
 
-|                   | QNS                        | QuantaProof                |
+|                   | QNS                        | QuantaStark                |
 | ----------------- | -------------------------- | -------------------------- |
 | Enclave           | `qrl2-qns`                 | `qrl2-stark`               |
 | Chain id          | 3151908                    | 3151909                    |

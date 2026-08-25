@@ -37,7 +37,7 @@ const skip = rpcUrl ? false : 'set STARK_RPC_URL to run against a node';
 const utf8 = (text) => new TextEncoder().encode(text);
 
 const PROGRAM_ID = abi.keccak256Hex(utf8('bridge-mock-v1'));
-const GENESIS_ROOT = abi.keccak256Hex(utf8('quantaproof-genesis'));
+const GENESIS_ROOT = abi.keccak256Hex(utf8('quantastark-genesis'));
 const DEPOSIT_AMOUNT = 10n ** 15n; // planck
 const WITHDRAW_AMOUNT = 3n * 10n ** 14n;
 const VECTOR = path.join(__dirname, '..', 'vectors', 'fib_c3_n10.json');

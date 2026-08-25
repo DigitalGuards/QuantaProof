@@ -121,7 +121,7 @@ impl<F> Borrow<FibonacciRow<F>> for [F] {
     }
 }
 
-// End of the copied Plonky3 code. The helper below is QuantaProof's own.
+// End of the copied Plonky3 code. The helper below is QuantaStark's own.
 
 /// The public values `[a, b, x]` for a trace of `n` rows started from `(a, b)`: `x` is the
 /// `right` cell of the last row, exactly what the last-row constraint checks.

@@ -2,12 +2,12 @@
 pragma hyperion >=0.0;
 
 /// @title IStarkVerifier
-/// @notice Minimal verifier surface shared by every QuantaProof STARK verifier.
+/// @notice Minimal verifier surface shared by every QuantaStark STARK verifier.
 /// @dev `proof` is the packed calldata layout described in docs/PROTOCOL.md
 ///      (8-byte little-endian Goldilocks elements, 32-byte digests).
 ///      `publicValues` holds the AIR's public inputs in the same element encoding.
 ///      Implementations revert with a custom error on any malformed or failing
-///      proof and return true on success. QuantaProof verifiers never return
+///      proof and return true on success. QuantaStark verifiers never return
 ///      false; the boolean exists so callers can treat a non-reverting call
 ///      as accepted without decoding revert data.
 interface IStarkVerifier {

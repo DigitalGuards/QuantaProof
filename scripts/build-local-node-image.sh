@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the go-qrl execution client image for the QuantaProof Kurtosis
+# Build the go-qrl execution client image for the QuantaStark Kurtosis
 # composition from the go-qrl-stark worktree. Adapted from the QNS builder.
 set -euo pipefail
 

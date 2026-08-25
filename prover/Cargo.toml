@@ -5,7 +5,7 @@ members = ["stark-prover"]
 [workspace.package]
 edition = "2024"
 license = "GPL-3.0-only"
-repository = "https://github.com/DigitalGuards/QuantaProof"
+repository = "https://github.com/DigitalGuards/QuantaStark"
 
 [profile.release]
 opt-level = 3

@@ -68,7 +68,7 @@ function verifyRaw(bytes64 digest, bytes memory signature, bytes memory publicKe
 ```
 
 The driver derives a deterministic ML-DSA-87 keypair (32-byte seed of `0x01`),
-hashes the message `QuantaProof hypc legacy codegen repro` with SHAKE256 to a
+hashes the message `QuantaStark hypc legacy codegen repro` with SHAKE256 to a
 64-byte digest, signs the digest with the FIPS 204 context `QP-REPRO-v1`, and
 checks the signature offline first (`verifyDigest` true; a flipped first byte
 false). `digestOf(message)` on chain equals the JS digest under both pipelines.
@@ -501,7 +501,7 @@ and all three build scripts use the legacy pipeline (no `--via-ir`, no
 | `QuantaPool`      | `contracts/hyperion/ValidatorManager.hyp`: `mapping(bytes32 => uint256) public pubkeyToIndex`                                                                                                                                                                                   | 2           | `scripts/compile-hyperion.js`: `--bin` (legacy)                                      |
 | `QuantaPool`      | `contracts/hyperion/DepositPool-v2.hyp`: `mapping(address => WithdrawalRequest[]) public withdrawalRequests` (read by `frontend/src/stores/poolStore.ts:1144`), `mapping(address => uint256) public nextWithdrawalIndex` (read by `scripts/integration-test-v2.js:415,460,642`) | 2           | same                                                                                 |
 | `QuantaPool`      | `ValidatorManager.validators` (`uint256` key), `stQRL-v2.hyp` private mappings with explicit views                                                                                                                                                                              | none        | same                                                                                 |
-| `QuantaProof`     | `StarkFactRegistry`, `StateBridge`: internal mappings with explicit views; `StateBridge.withdraw` uses the builtin and the suite compiles with `viaIr: true` (canary case in `test/contracts/bridge.test.js`)                                                                   | 1 mitigated | `scripts/compile-hyperion.js`, `HYPERION_VIA_IR=1`                                   |
+| `QuantaStark`     | `StarkFactRegistry`, `StateBridge`: internal mappings with explicit views; `StateBridge.withdraw` uses the builtin and the suite compiles with `viaIr: true` (canary case in `test/contracts/bridge.test.js`)                                                                   | 1 mitigated | `scripts/compile-hyperion.js`, `HYPERION_VIA_IR=1`                                   |
 
 What the defects do to those contracts under a legacy 64-byte build:
 
@@ -520,7 +520,7 @@ What the defects do to those contracts under a legacy 64-byte build:
   the zero hash (0), `nextWithdrawalIndex(addr)` returns 0, and
   `withdrawalRequests(addr, i)` reads an empty array for every such address
   (the getter's bounds check then reverts).
-- Workarounds until the compiler is patched: build with `--via-ir` (QuantaProof
+- Workarounds until the compiler is patched: build with `--via-ir` (QuantaStark
   already does), or keep mappings internal and expose explicit views (the
   pattern the bridge contracts use).
 

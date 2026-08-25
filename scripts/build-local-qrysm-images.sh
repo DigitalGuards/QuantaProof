@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the pinned Qrysm beacon, validator and genesis-generator images for
-# the QuantaProof Kurtosis composition (qrl2-stark namespace). Adapted from
+# the QuantaStark Kurtosis composition (qrl2-stark namespace). Adapted from
 # the QNS builder; same source pins.
 set -euo pipefail
 

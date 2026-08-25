@@ -652,7 +652,7 @@ Latency budget:
 | L1 finality                        | about 96 s                      | about 4.3 h                          | two epochs                                         |
 | Withdrawal available               | finality + delay (item 7)       | finality + delay                     |                                                    |
 
-Who runs what. Phase 1 (public testnet): the QuantaProof maintainers run one
+Who runs what. Phase 1 (public testnet): the QuantaStark maintainers run one
 sequencer, one prover pool and one submitter; the explorer indexes L2 blocks
 through the sequencer RPC; the web, desktop and mobile wallets add the L2 key
 derivation and the sequencer endpoint next to the existing L1 RPC proxy; the dApp

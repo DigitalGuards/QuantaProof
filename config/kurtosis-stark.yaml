@@ -1,4 +1,4 @@
-# QuantaProof local 64-byte network: enclave qrl2-stark, chain 3151909,
+# QuantaStark local 64-byte network: enclave qrl2-stark, chain 3151909,
 # execution RPC http://127.0.0.1:32102. Coexists with the QNS composition
 # (qrl2-qns, chain 3151908, ports 32000+). Images are built from pinned
 # sources by scripts/build-local-node-image.sh and build-local-qrysm-images.sh.

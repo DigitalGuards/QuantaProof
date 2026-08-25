@@ -1,5 +1,5 @@
 {
-  "name": "quantaproof",
+  "name": "quantastark",
   "version": "0.1.0",
   "private": true,
   "description": "Post-quantum STARK verifier for QRL 2.0: Plonky3-compatible proofs verified by Hyperion contracts on the 64-byte QRVM",

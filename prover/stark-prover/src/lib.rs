@@ -1,5 +1,5 @@
 //! Prover, calldata serializer, transcript mirror and test-vector tooling for the
-//! QuantaProof on-chain STARK verifier.
+//! QuantaStark on-chain STARK verifier.
 //!
 //! The proof system is Plonky3 `uni-stark` (pinned to the version in `../PLONKY3_VERSION`)
 //! over Goldilocks with keccak256 Merkle trees and a keccak256 Fiat-Shamir transcript.

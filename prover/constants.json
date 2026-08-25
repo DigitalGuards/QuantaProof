@@ -1,5 +1,5 @@
 {
-  "description": "Goldilocks constants used by the QuantaProof verifier. Field elements travel as canonical 8-byte little-endian words; the QRVM word is 512 bits (8 lanes of 64 bits).",
+  "description": "Goldilocks constants used by the QuantaStark verifier. Field elements travel as canonical 8-byte little-endian words; the QRVM word is 512 bits (8 lanes of 64 bits).",
   "epsilon": {
     "dec": "4294967295",
     "hex": "0x00000000ffffffff"

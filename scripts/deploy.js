@@ -291,7 +291,7 @@ async function main() {
   const settings = P.optimizerSettings();
 
   console.log('='.repeat(60));
-  console.log('QuantaProof deployment');
+  console.log('QuantaStark deployment');
   console.log('='.repeat(60));
   console.log(`Provider:         ${config.rpcUrl}`);
   console.log(`Expected chainId: ${config.chainId}`);

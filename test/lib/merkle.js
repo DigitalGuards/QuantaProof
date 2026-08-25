@@ -1,5 +1,5 @@
 // JS reference for the keccak256 Merkle commitments and the pruned
-// multi-opening verification of p3-merkle-tree 0.7.0-rc.1 as QuantaProof
+// multi-opening verification of p3-merkle-tree 0.7.0-rc.1 as QuantaStark
 // uses them: binary trees (N = 2), 32-byte digests, cap height 0 (the
 // commitment is the single root), one matrix per commitment.
 //

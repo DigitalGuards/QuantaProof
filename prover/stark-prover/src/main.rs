@@ -20,7 +20,7 @@ use stark_prover::vectors::{
 #[derive(Parser)]
 #[command(
     name = "stark-prover",
-    about = "Plonky3 Fibonacci STARK prover and test-vector tooling for the QuantaProof verifier"
+    about = "Plonky3 Fibonacci STARK prover and test-vector tooling for the QuantaStark verifier"
 )]
 struct Cli {
     #[command(subcommand)]

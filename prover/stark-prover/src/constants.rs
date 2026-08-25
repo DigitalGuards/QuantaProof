@@ -25,7 +25,7 @@ pub fn constants_json() -> Value {
     json!({
         "field": "goldilocks",
         "plonky3Version": PLONKY3_VERSION,
-        "description": "Goldilocks constants used by the QuantaProof verifier. Field elements travel as canonical 8-byte little-endian words; the QRVM word is 512 bits (8 lanes of 64 bits).",
+        "description": "Goldilocks constants used by the QuantaStark verifier. Field elements travel as canonical 8-byte little-endian words; the QRVM word is 512 bits (8 lanes of 64 bits).",
         "p": num(GOLDILOCKS_P),
         "pMinusOne": num(GOLDILOCKS_P - 1),
         "epsilon": num(0xFFFF_FFFF),

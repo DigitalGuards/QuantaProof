@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start (or reuse) the QuantaProof Kurtosis composition: enclave qrl2-stark,
+# Start (or reuse) the QuantaStark Kurtosis composition: enclave qrl2-stark,
 # chain 3151909, execution RPC on http://127.0.0.1:32102, images in the
 # qrl2-stark namespace. Coexists with the QNS composition (qrl2-qns, chain
 # 3151908, ports 32000+). Adapted from the QNS driver (GPL-3.0).

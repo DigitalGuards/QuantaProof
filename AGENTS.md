@@ -1,4 +1,4 @@
-# QuantaProof Repository Guide
+# QuantaStark Repository Guide
 
 Rules for coding agents and contributors working in this repository. The
 collection-wide workspace rules apply on top of this file; where the two
@@ -6,7 +6,7 @@ overlap, the stricter rule wins.
 
 ## What this repository is
 
-QuantaProof is a post-quantum STARK verifier for QRL 2.0: Hyperion contracts
+QuantaStark is a post-quantum STARK verifier for QRL 2.0: Hyperion contracts
 that verify Plonky3-compatible proofs on the 64-byte QRVM, the Rust prover and
 vector tooling that feed them, a fact registry plus bridge skeleton, and the
 gas measurements that decide the L2 design. Read `README.md`, then

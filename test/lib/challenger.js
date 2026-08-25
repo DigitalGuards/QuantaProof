@@ -1,5 +1,5 @@
 // Byte-exact JS model of the Plonky3 Fiat-Shamir transcript used by
-// QuantaProof: SerializingChallenger64<Goldilocks, HashChallenger<u8,
+// QuantaStark: SerializingChallenger64<Goldilocks, HashChallenger<u8,
 // Keccak256Hash, 32>> (crates p3-challenger 0.7.0-rc.1).
 //
 // Semantics, with the rc.1 source locations they are taken from:

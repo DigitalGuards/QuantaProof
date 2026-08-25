@@ -1,6 +1,6 @@
-# QuantaProof protocol contract (Plonky3 uni-stark, Goldilocks, keccak256)
+# QuantaStark protocol contract (Plonky3 uni-stark, Goldilocks, keccak256)
 
-This document is the normative, byte-exact description of what the QuantaProof on-chain verifier
+This document is the normative, byte-exact description of what the QuantaStark on-chain verifier
 must compute. Every statement is derived from the pinned Plonky3 sources (crates.io
 `0.7.0-rc.1`, see `prover/PLONKY3_VERSION`) and confirmed by byte-level logging of the unmodified
 upstream `prove` / `verify` functions (`prover/stark-prover/src/challenger.rs`) against the
