@@ -6,8 +6,10 @@ pragma hyperion >=0.0;
 /// @dev `proof` is the packed calldata layout described in docs/PROTOCOL.md
 ///      (8-byte little-endian Goldilocks elements, 32-byte digests).
 ///      `publicValues` holds the AIR's public inputs in the same element encoding.
-///      Implementations revert with a custom error on malformed input and
-///      return false only for a well-formed proof that fails a check.
+///      Implementations revert with a custom error on any malformed or failing
+///      proof and return true on success. QuantaProof verifiers never return
+///      false; the boolean exists so callers can treat a non-reverting call
+///      as accepted without decoding revert data.
 interface IStarkVerifier {
     function verify(bytes calldata proof, bytes calldata publicValues) external view returns (bool);
 }

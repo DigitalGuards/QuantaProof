@@ -32,7 +32,7 @@ import "./ProofLayout.hyp";
 ///        vals       2 * 2^maxK                   one row as numbers (c0, c1 each)
 ///        scratch    Q                            per-query input-block leaf digests
 ///        kp         17                           lane masks and opening constants
-///        qs         6                            fold-chain state: index, value (c0, c1), height, k, sInv
+///        qs         8                            fold-chain state: index, value (c0, c1), height, k, sInv
 ///        pw, sw     ceil(H / 4) x 16             windowed products of tab and tabInv (see below)
 ///        gk         2^(maxK+1) - 2               g_k^rev(pos, k) at 2^k - 2 + pos, k = 1..maxK
 ///      Every domain point is a product over the set bits of an index of the

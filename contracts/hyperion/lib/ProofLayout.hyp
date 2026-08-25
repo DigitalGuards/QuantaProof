@@ -91,6 +91,12 @@ library ProofLayout {
     uint512 internal constant LANE_BIT32 =
         0x00000001000000000000000100000000000000010000000000000001000000000000000100000000000000010000000000000001000000000000000100000000;
 
+    /// @notice Largest log2 final polynomial length the challenger buffer can
+    ///         absorb: the final polynomial is observed in one transcript
+    ///         segment with the chaining digest and the round arities, and
+    ///         KeccakChallenger.BUF_CAPACITY (8192 bytes) holds it up to 8.
+    uint512 internal constant MAX_LOG_FINAL_POLY_LEN = 8;
+
     /// @notice `proof[0]` is not the layout version.
     error BadVersion();
     /// @notice Header values outside the rules of PROTOCOL.md section 11.3.
@@ -144,6 +150,7 @@ library ProofLayout {
         if (n == 0 || n + p.logBlowup > TWO_ADICITY) revert BadHeader();
         if (n < p.logFinalPolyLen) revert BadHeader();
         if (p.maxLogArity == 0 || p.numQueries == 0) revert BadHeader();
+        if (p.logFinalPolyLen > MAX_LOG_FINAL_POLY_LEN) revert BadHeader();
 
         uint512 rounds;
         assembly ("memory-safe") {
@@ -157,7 +164,17 @@ library ProofLayout {
                 k := shr(504, calldataload(add(add(base, 3), r)))
                 mstore(add(rounds, mul(r, ROUND_BYTES)), k)
             }
-            if (k == 0 || k > p.maxLogArity) revert BadHeader();
+            // The schedule is pinned to the one the prover emits: p3-fri
+            // 0.7.0-rc.1 config.rs compute_log_arity_for_round is
+            // min(max_log_arity, distance to the final height) when every
+            // input batch sits at the same height, which holds for this AIR
+            // (both batches at H). Accepting any other schedule would let a
+            // prover pick the most expensive one (about three times the gas
+            // of the pinned schedule). A multi-height AIR must add the
+            // next-input-height term before relaxing this rule.
+            uint512 remaining = n - p.logFinalPolyLen - sum;
+            uint512 expected = remaining < p.maxLogArity ? remaining : p.maxLogArity;
+            if (k == 0 || k != expected) revert BadHeader();
             sum += k;
         }
         if (sum != n - p.logFinalPolyLen) revert BadHeader();
