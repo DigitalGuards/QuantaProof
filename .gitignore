@@ -4,7 +4,7 @@
 !.env.example
 
 # Build artifacts
-build/hyperion/
+/build/
 prover/target/
 node_modules/
 test/vectors/large/
@@ -28,3 +28,6 @@ build/dev-node/
 
 # Dev-node deployment record (seeded from config/dev-node.example.json)
 /config/dev-node.json
+
+# Per-setting measurement store of scripts/gas-report.js (renders docs/GAS-REPORT.md)
+/build/gas-report/

@@ -3,9 +3,7 @@
   "chainId": 1337,
   "rpcUrl": "http://127.0.0.1:8545",
   "contracts": {
-    "StarkVerifier": null,
-    "StarkVerifierGasMeter": null,
-    "StarkFactRegistry": null,
-    "StateBridge": null
+    "verifiers": {},
+    "bridge": null
   }
 }

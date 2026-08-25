@@ -4,6 +4,10 @@ How the compiler, the execution client and the two local networks are built and
 used. Everything here is relative to the collection root that holds this
 repository and its sibling checkouts (`go-qrl`, `hyperion`, `qrl-package`).
 
+Status (2026-08-25): the compiler and the execution client are built, the
+developer node is validated and carries every measurement in
+`docs/GAS-REPORT.md`; the Kurtosis composition is pending its image build.
+
 ## Worktrees and snapshot commits
 
 The QNS precompile alignment (ML-DSA-87 verify at `0x03` with a 64-byte digest,
@@ -38,7 +42,8 @@ cmake --build hyperion-stark/build --target hypc -j"$(nproc)"
 hyperion-stark/build/hypc/hypc --version
 ```
 
-Every compile passes the binary explicitly:
+The build in use reports `0.2.0-develop.2026.8.25+commit.cf176678`. Every
+compile passes the binary explicitly:
 
 ```bash
 HYPERION_COMPILER=../hyperion-stark/build/hypc/hypc npm run compile
@@ -47,13 +52,18 @@ HYPERION_COMPILER=../hyperion-stark/build/hypc/hypc npm run compile
 `npm run compile` runs `scripts/compile-hyperion.js` (ABI, `.bin`,
 `.bin-runtime`, `build/hyperion/manifest.json` with `compilerVersion` and
 `plonky3Version`) followed by `scripts/check-code-size.js`. The contract test
-suite compiles harnesses through `scripts/hypc.js` (standard JSON) with the
-same binary. The system-wide `hypc` predates the 64-byte word: never use it, and
-never rely on `PATH`.
+suite and `npm run deploy` compile through `scripts/hypc.js` (standard JSON)
+with the same binary. The system-wide `hypc` predates the 64-byte word: never
+use it, and never rely on `PATH`.
 
 The compiler build fixes the word width and the precompile slots behind the
 `shake256` and `mldsa87verify` builtins, which is why the manifest records the
-exact version string.
+exact version string. Two defects of its legacy code generator are documented
+in `docs/compiler/HYPC-LEGACY-CODEGEN-DEFECTS.md`; the bridge contracts
+therefore compile with `--via-ir` (`scripts/lib/presets.js::compileBridge`
+forces it) while the verifier uses the legacy pipeline at optimizer runs 200
+by default. `HYPERION_OPTIMIZE_RUNS` and `HYPERION_VIA_IR` change the setting
+for `npm run compile`, `npm run deploy` and the contract suites alike.
 
 ## Execution client: gqrl from go-qrl-stark
 
@@ -75,17 +85,24 @@ gqrl --dev --dev.period 0 --dev.gaslimit 20000000 --nodiscover --ipcdisable \
      --http.vhosts localhost --verbosity 3 --datadir build/dev-node
 ```
 
-Facts about this mode, verified in the client source:
+Facts about this mode, verified in the client source and on the running node
+(2026-08-25):
 
-- chain id 1337 (`--networkid` is left at the developer default);
+- chain id 1337 (`qrl_chainId` returns `0x539`; `--networkid` is left at the
+  developer default);
 - one developer account created in the keystore of the data directory,
   unlocked with an empty passphrase and pre-funded in the developer genesis;
   `qrl_accounts` returns it and `qrl_sendTransaction` lets the node sign;
 - `--dev.period 0` seals a block as soon as a transaction is pending, through a
-  simulated beacon; no validator or beacon process is involved;
-- `--dev.gaslimit` sets the genesis gas limit. It applies only when the data
-  directory is created; an existing chain keeps its own genesis, so delete
-  `build/dev-node` to reset;
+  simulated beacon, in well under a second; no validator or beacon process is
+  involved;
+- `--dev.gaslimit 20000000` sets the genesis gas limit and the latest block
+  reports `gasLimit 0x1312d00` (20,000,000, the consensus cap). It applies only
+  when the data directory is created; an existing chain keeps its own genesis,
+  so delete `build/dev-node` to reset;
+- the data directory persists between runs: the developer account and every
+  deployed contract survive a restart, and the deployment records in
+  `config/dev-node.json` stay valid;
 - developer mode disables discovery, dialing and listening by itself;
   `--nodiscover` is kept explicit;
 - `--ipcdisable` is mandatory: gqrl otherwise fails with
@@ -93,12 +110,18 @@ Facts about this mode, verified in the client source:
   path is long;
 - the default HTTP modules are `net,web3`, so `qrl` and `debug` are requested
   explicitly;
-- the precompile stubs `0x01` to `0x06` are pre-allocated in the developer
-  genesis.
-
-Validated on 2026-08-25: `qrl_chainId` returns `0x539`, the developer account
-is funded, a transfer seals in well under a second, the latest block reports
-`gasLimit 0x1312d00` (20,000,000), and the `0x05` and `0x06` precompiles answer.
+- the precompiles are live: `0x03` (ML-DSA-87 verify, 64-byte digest) answers
+  the bridge withdrawals, `0x05` (modexp) the field inversions, `0x06`
+  (SHAKE256) the withdrawal digests; the stubs `0x01` to `0x06` are
+  pre-allocated in the developer genesis;
+- the transaction fee is capped at 1 quanta per transaction, so the scripts
+  send with the estimate plus 20 percent instead of a blanket gas limit;
+- the transaction pool rejects any transaction above 131,072 bytes with
+  `oversized data` (`txMaxSize` in `core/txpool/legacypool`, a pool constant
+  without a command-line knob). Proofs above about 123 KB therefore cannot be
+  sent as one transaction on an unmodified client; `qrl_call` and
+  `qrl_estimateGas` still execute them, which is how the gas report measures
+  those cells (marked in `docs/GAS-REPORT.md`).
 
 Environment knobs: `GQRL_BIN` (binary, default `../go-qrl-stark/build/bin/gqrl`),
 `STARK_DEV_PORT` (8545), `STARK_DEV_DATADIR` (`build/dev-node`),
@@ -115,7 +138,17 @@ and through `STARK_CONFIG=config/dev-node.json` for `npm run deploy`,
 `npm run verify:proof` and `npm run gas:report`. Kurtosis remains the
 authoritative gate; the developer node has no beacon and no second client.
 
-## Release gate: the Kurtosis composition
+## Release gate: the Kurtosis composition (pending the image build)
+
+Status: the composition is prepared but has not been exercised on this
+workstation yet. Neither the execution image nor the Qrysm images have been
+built (the Docker daemon is normally stopped and the builds compete with other
+work on the machine), so no enclave has run and no number in
+`docs/GAS-REPORT.md` comes from it. The procedure below is the QNS-validated
+one carried over with the port, chain-id and image-namespace changes; running
+it end to end (build, start, deploy, verify, report) is the remaining step of
+milestone M7. The execution client in the image is the same source as the
+developer node, so the transaction-pool size cap applies there as well.
 
 | Item              | Value                                                                                                                             |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -197,21 +230,67 @@ scope.
 
 ## Deploy, verify, measure
 
+The same three commands serve both networks; only `STARK_CONFIG` (and the
+account selector on Kurtosis) differ.
+
 ```bash
-HYPERION_COMPILER=../hyperion-stark/build/hypc/hypc npm run compile
-STARK_CONFIG=config/local-stark.json STARK_PUBLIC_DEV_ACCOUNT=0 npm run deploy
-STARK_CONFIG=config/local-stark.json npm run verify:proof -- --vector test/vectors/fib_c3_n20.json
+export HYPERION_COMPILER=../hyperion-stark/build/hypc/hypc
+
+# developer node (the node signs with its developer account)
+STARK_CONFIG=config/dev-node.json npm run deploy -- --preset all
+STARK_CONFIG=config/dev-node.json npm run verify:proof -- --vector test/vectors/fib_c3_n12.json
+STARK_CONFIG=config/dev-node.json npm run gas:report
+
+# Kurtosis (published fixture account, loopback and chain 3151909 only)
+STARK_CONFIG=config/local-stark.json STARK_PUBLIC_DEV_ACCOUNT=0 npm run deploy -- --preset all
+STARK_CONFIG=config/local-stark.json npm run verify:proof -- --vector test/vectors/large/fib_c3_n20.json
 STARK_CONFIG=config/local-stark.json npm run gas:report
 ```
 
-`deploy` asserts the chain id, estimates gas with a 20 percent margin capped at
-the block gas limit, deploys `StarkVerifier` then `StarkVerifierGasMeter(verifier)`
-with the 64-byte address appended raw to the creation code, checks that code
-exists at each address, and writes the addresses back (the previous set moves
-to `previousContracts`). `verify:proof` hand-encodes `verifyAndLog(bytes,bytes)`
-with the 64-byte-word ABI, prints the transaction hash, `gasUsed` and the
-decoded `Verified` event, and runs a `qrl_call` of `verify(bytes,bytes)`.
-`gas:report` repeats that for every vector and regenerates `docs/GAS-REPORT.md`.
+`deploy` (`scripts/deploy.js`) asserts the chain id, compiles
+`StarkVerifier.hyp` once per requested preset with the six preset constants
+substituted (`--preset <name|all>`, default `c3`, the committed constants;
+`scripts/lib/presets.js` carries the table of sixteen presets and the
+substitution), refuses a runtime above 24,576 bytes, estimates gas with a 20
+percent margin capped at the block gas limit, deploys the verifier and then
+`StarkVerifierGasMeter(verifier)` with the 64-byte address appended raw to the
+creation code, checks that code exists at each address and writes
+`contracts.verifiers[<preset>] = { verifier, gasMeter, config, compiler: { version, runs, viaIr }, runtimeBytes, ... }`
+into the record (presets from earlier runs are kept, the previous record moves
+to `previousContracts`). `STARK_DEPLOY_BRIDGE=1` (or `--bridge`) adds
+`StarkFactRegistry(verifier, programId)` and
+`StateBridge(registry, programId, verifier, 0x00..00)` compiled through the IR
+pipeline, bound to the c3 verifier of the run (or the first deployed preset),
+with `programId = keccak256("fibonacci-<preset>-v1")`, under `contracts.bridge`.
+
+`verify:proof` (`scripts/verify-proof.js`) derives the preset from the vector's
+`config`, picks that verifier and gas meter from the record, hand-encodes
+`verify(bytes,bytes)` and `verifyAndLog(bytes,bytes)` with the 64-byte-word ABI,
+and prints the calldata size and calldata gas, `qrl_estimateGas` of a direct
+`verify` transaction, the `qrl_call` result, the transaction hash, the receipt
+`gasUsed`, the inner gas from the `Verified` event and the `ok` flag. It exits
+with status 1 when the outcome differs from the vector's expectation (a valid
+vector rejected, a mutated vector accepted). A proof above the transaction-pool
+cap is simulated with a `qrl_call` of `verifyAndLog` and reported as such.
+
+`gas:report` (`scripts/gas-report.js`) measures every valid vector under
+`test/vectors/` and `test/vectors/large/` through the gas meter of its preset
+(one discarded warm-up call per meter, so the receipts are steady-state
+numbers), computes the plan's gas model from the vector's exact layout, and
+regenerates `docs/GAS-REPORT.md`. Measurements are stored per optimizer setting
+in `build/gas-report/<label>.json` (the label comes from the compiler settings
+recorded by `deploy`), so the three-setting comparison is produced by
+deploying and measuring three times:
+
+```bash
+HYPERION_OPTIMIZE_RUNS=1000000 STARK_CONFIG=config/dev-node.json npm run deploy -- --preset all
+STARK_CONFIG=config/dev-node.json npm run gas:report
+HYPERION_VIA_IR=1 STARK_CONFIG=config/dev-node.json npm run deploy -- --preset all
+STARK_CONFIG=config/dev-node.json npm run gas:report
+STARK_CONFIG=config/dev-node.json npm run deploy -- --preset all      # runs 200, the primary tables
+STARK_CONFIG=config/dev-node.json npm run gas:report
+npm run gas:report -- --render-only                                    # re-render without a node
+```
 
 ## Prerequisites and offline notes
 
