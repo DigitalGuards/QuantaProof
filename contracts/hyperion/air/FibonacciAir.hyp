@@ -1,0 +1,215 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "../lib/Goldilocks.hyp";
+import "../lib/Fp2.hyp";
+
+/// @title FibonacciAir
+/// @notice Constraint side of the verifier for the upstream Plonky3 Fibonacci
+///         test AIR (docs/PROTOCOL.md section 10): the trace-domain selectors
+///         at `zeta`, the five constraints in emission order, the `alpha`
+///         accumulator, the quotient recomposition and the identity
+///         `acc / Z_H(zeta) == quotient`. Executable specification:
+///         `test/lib/fibonacciAir.js`.
+/// @dev Extension elements travel as `(c0, c1)` pairs of canonical uint512
+///      values. The three selector denominators (`zeta - 1`, `zeta - g_n^-1`
+///      and `Z_H(zeta)`) are inverted together through `Fp2.batchInverse`, so
+///      the constraint check costs one modexp call. `selectors` runs right
+///      after `zeta` is sampled and raises `OodPointInDomain` when
+///      `zeta^(2^n) == 1` (transcript step 9); `check` runs after the opened
+///      values are absorbed and raises `OodMismatch` (check-order step 3).
+///      Opened values arrive as a memory array of twelve words in wire order
+///      (`trace_local[0..2]`, `trace_next[0..2]`, `quotient_chunk[0..2]`, each
+///      as `c0, c1`), public values as three words.
+library FibonacciAir {
+    /// @notice Trace width (columns per row).
+    uint512 internal constant WIDTH = 2;
+    /// @notice Number of public values: `[a, b, x]`.
+    uint512 internal constant NUM_PV = 3;
+    /// @notice log2 of the number of quotient chunks (degree 2 constraints).
+    uint512 internal constant LOG_CHUNKS = 0;
+    /// @notice The extension non-residue, literal copy of Fp2.W for Yul.
+    uint512 internal constant W = 7;
+    /// @notice Literal copy of Goldilocks.P for Yul.
+    uint512 internal constant P = 0xFFFFFFFF00000001;
+
+    /// @notice `zeta` lies on the trace domain (`zeta^(2^n) == 1`).
+    error OodPointInDomain();
+    /// @notice The folded constraints at `zeta` disagree with the quotient.
+    error OodMismatch();
+
+    /// @notice Trace-domain selectors at `zeta` (subgroup of order 2^n, shift 1).
+    struct Selectors {
+        uint512 isFirst0;
+        uint512 isFirst1;
+        uint512 isLast0;
+        uint512 isLast1;
+        uint512 isTrans0;
+        uint512 isTrans1;
+        uint512 invVan0;
+        uint512 invVan1;
+    }
+
+    /// @notice Compute the selectors of the trace domain of size 2^n at
+    ///         `zeta = (z0, z1)`; reverts OodPointInDomain when Z_H(zeta) = 0.
+    /// @dev `Z_H = zeta^(2^n) - 1`, `isFirst = Z_H / (zeta - 1)`,
+    ///      `isLast = Z_H / (zeta - g_n^-1)`, `isTrans = zeta - g_n^-1`,
+    ///      `invVan = 1 / Z_H`. With Z_H nonzero the other two denominators are
+    ///      nonzero as well (1 and g_n^-1 lie on the domain).
+    function selectors(
+        uint512 n,
+        uint512 z0,
+        uint512 z1
+    ) internal view returns (Selectors memory s) {
+        (uint512 zH0, uint512 zH1) = (z0, z1);
+        for (uint512 i = 0; i < n; i++) {
+            (zH0, zH1) = Fp2.sq(zH0, zH1);
+        }
+        (zH0, zH1) = Fp2.sub(zH0, zH1, 1, 0);
+        if (zH0 == 0 && zH1 == 0) revert OodPointInDomain();
+
+        uint512 gInv = Goldilocks.twoAdicGenInv(n);
+        (uint512 t0, uint512 t1) = Fp2.sub(z0, z1, gInv, 0);
+        s.isTrans0 = t0;
+        s.isTrans1 = t1;
+
+        // Batch: [zeta - 1, zeta - g^-1, Z_H] as 128-byte elements.
+        uint512 ptr;
+        assembly ("memory-safe") {
+            ptr := mload(0x80)
+            mstore(0x80, add(ptr, 384))
+            mstore(ptr, addmod(z0, sub(P, 1), P))
+            mstore(add(ptr, 64), z1)
+            mstore(add(ptr, 128), t0)
+            mstore(add(ptr, 192), t1)
+            mstore(add(ptr, 256), zH0)
+            mstore(add(ptr, 320), zH1)
+        }
+        Fp2.batchInverse(ptr, 3);
+        uint512 i0;
+        uint512 i1;
+        assembly ("memory-safe") {
+            i0 := mload(ptr)
+            i1 := mload(add(ptr, 64))
+        }
+        (s.isFirst0, s.isFirst1) = Fp2.mul(zH0, zH1, i0, i1);
+        assembly ("memory-safe") {
+            i0 := mload(add(ptr, 128))
+            i1 := mload(add(ptr, 192))
+        }
+        (s.isLast0, s.isLast1) = Fp2.mul(zH0, zH1, i0, i1);
+        assembly ("memory-safe") {
+            i0 := mload(add(ptr, 256))
+            i1 := mload(add(ptr, 320))
+        }
+        s.invVan0 = i0;
+        s.invVan1 = i1;
+    }
+
+    /// @notice The five constraints folded with `alpha`, in emission order:
+    ///         `acc = (((c1 alpha + c2) alpha + c3) alpha + c4) alpha + c5`.
+    /// @param opened memory array of 12 words (see the library notes)
+    /// @param pv memory array of 3 words `[a, b, x]`
+    function accumulate(
+        Selectors memory s,
+        uint512 alpha0,
+        uint512 alpha1,
+        uint512 opened,
+        uint512 pv
+    ) internal pure returns (uint512 acc0, uint512 acc1) {
+        uint512 t0;
+        uint512 t1;
+        // c1 = isFirst * (l0 - a)
+        (t0, t1) = diffBase(opened, pv);
+        (acc0, acc1) = Fp2.mul(s.isFirst0, s.isFirst1, t0, t1);
+        // c2 = isFirst * (l1 - b)
+        (t0, t1) = diffBase(opened + 128, pv + 64);
+        (t0, t1) = Fp2.mul(s.isFirst0, s.isFirst1, t0, t1);
+        (acc0, acc1) = step(acc0, acc1, alpha0, alpha1, t0, t1);
+        // c3 = isTrans * (l1 - n0)
+        (t0, t1) = diffExt(opened + 128, opened + 256);
+        (t0, t1) = Fp2.mul(s.isTrans0, s.isTrans1, t0, t1);
+        (acc0, acc1) = step(acc0, acc1, alpha0, alpha1, t0, t1);
+        // c4 = isTrans * (l0 + l1 - n1)
+        (t0, t1) = sumDiffExt(opened, opened + 128, opened + 384);
+        (t0, t1) = Fp2.mul(s.isTrans0, s.isTrans1, t0, t1);
+        (acc0, acc1) = step(acc0, acc1, alpha0, alpha1, t0, t1);
+        // c5 = isLast * (l1 - x)
+        (t0, t1) = diffBase(opened + 128, pv + 128);
+        (t0, t1) = Fp2.mul(s.isLast0, s.isLast1, t0, t1);
+        (acc0, acc1) = step(acc0, acc1, alpha0, alpha1, t0, t1);
+    }
+
+    /// @dev Extension element at `ep` minus the base element at `bp`.
+    function diffBase(uint512 ep, uint512 bp) internal pure returns (uint512 c0, uint512 c1) {
+        assembly ("memory-safe") {
+            c0 := addmod(mload(ep), sub(P, mload(bp)), P)
+            c1 := mload(add(ep, 64))
+        }
+    }
+
+    /// @dev Extension element at `ap` minus the one at `bp`.
+    function diffExt(uint512 ap, uint512 bp) internal pure returns (uint512 c0, uint512 c1) {
+        assembly ("memory-safe") {
+            c0 := addmod(mload(ap), sub(P, mload(bp)), P)
+            c1 := addmod(mload(add(ap, 64)), sub(P, mload(add(bp, 64))), P)
+        }
+    }
+
+    /// @dev `mem[ap] + mem[bp] - mem[cp]` over extension elements.
+    function sumDiffExt(
+        uint512 ap,
+        uint512 bp,
+        uint512 cp
+    ) internal pure returns (uint512 c0, uint512 c1) {
+        assembly ("memory-safe") {
+            c0 := addmod(addmod(mload(ap), mload(bp), P), sub(P, mload(cp)), P)
+            c1 := addmod(
+                addmod(mload(add(ap, 64)), mload(add(bp, 64)), P),
+                sub(P, mload(add(cp, 64))),
+                P
+            )
+        }
+    }
+
+    /// @dev `acc * alpha + c`.
+    function step(
+        uint512 acc0,
+        uint512 acc1,
+        uint512 alpha0,
+        uint512 alpha1,
+        uint512 c0,
+        uint512 c1
+    ) internal pure returns (uint512 r0, uint512 r1) {
+        (r0, r1) = Fp2.mul(acc0, acc1, alpha0, alpha1);
+        (r0, r1) = Fp2.add(r0, r1, c0, c1);
+    }
+
+    /// @notice The quotient at `zeta` from the two opened basis coefficients of
+    ///         the single chunk: `q0 + X q1 = (q0.c0 + 7 q1.c1, q0.c1 + q1.c0)`.
+    function quotient(uint512 opened) internal pure returns (uint512 q0, uint512 q1) {
+        assembly ("memory-safe") {
+            let a0 := mload(add(opened, 512))
+            let a1 := mload(add(opened, 576))
+            let b0 := mload(add(opened, 640))
+            let b1 := mload(add(opened, 704))
+            q0 := addmod(a0, mulmod(W, b1, P), P)
+            q1 := addmod(a1, b0, P)
+        }
+    }
+
+    /// @notice The constraint identity `acc * invVan == quotient`; reverts
+    ///         OodMismatch otherwise.
+    function check(
+        Selectors memory s,
+        uint512 alpha0,
+        uint512 alpha1,
+        uint512 opened,
+        uint512 pv
+    ) internal pure {
+        (uint512 acc0, uint512 acc1) = accumulate(s, alpha0, alpha1, opened, pv);
+        (acc0, acc1) = Fp2.mul(acc0, acc1, s.invVan0, s.invVan1);
+        (uint512 q0, uint512 q1) = quotient(opened);
+        if (acc0 != q0 || acc1 != q1) revert OodMismatch();
+    }
+}

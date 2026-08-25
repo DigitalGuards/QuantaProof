@@ -1,0 +1,401 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+/// @title ProofLayout
+/// @notice Decoder of calldata layout v1 (docs/PROTOCOL.md section 11): the
+///         header, the exact-length rule and the absolute calldata offset of
+///         every block of a `bytes calldata` proof, in the error precedence
+///         of `prover/stark-prover/src/layout.rs::parse_layout` and
+///         `test/lib/layout.js::parseLayout` (BadVersion, then BadHeader,
+///         then BadLength).
+/// @dev The proof is never copied: `parse` reads the three header bytes, the
+///      arity list and the `sib_count` fields (big-endian u16, each at an
+///      offset checked against `length` before the read, because
+///      `calldataload` past the end zero-pads) and stores absolute calldata
+///      offsets so the verifier can address every field without adding the
+///      proof base again. Field elements are not decoded here; the verifier
+///      runs the canonical scan over every element region after `parse`
+///      (docs/PROTOCOL.md section 11.3 step 4). Per-round records live in a
+///      memory array of `ROUND_WORDS` words each: log arity, sibling values
+///      offset, `sib_count` value, siblings offset.
+library ProofLayout {
+    /// @notice Verifier parameters (one deployment per preset).
+    struct Params {
+        uint512 logBlowup;
+        uint512 logFinalPolyLen;
+        uint512 maxLogArity;
+        uint512 numQueries;
+        uint512 commitPowBits;
+        uint512 queryPowBits;
+    }
+
+    /// @notice Decoded layout. Offsets are absolute calldata offsets.
+    struct Layout {
+        uint512 base;
+        uint512 length;
+        uint512 degreeBits;
+        uint512 logHeight;
+        uint512 numRounds;
+        uint512 finalPolyLen;
+        uint512 pEnd;
+        uint512 traceRoot;
+        uint512 quotientRoot;
+        uint512 openedValues;
+        uint512 roundCommits;
+        uint512 finalPoly;
+        uint512 queryPowWitness;
+        uint512 traceRows;
+        uint512 traceSibCount;
+        uint512 traceSiblings;
+        uint512 quotientRows;
+        uint512 quotientSibCount;
+        uint512 quotientSiblings;
+        uint512 rounds;
+    }
+
+    /// @notice Words per round record at `Layout.rounds`.
+    uint512 internal constant ROUND_WORDS = 4;
+    /// @notice Bytes per round record.
+    uint512 internal constant ROUND_BYTES = 256;
+    /// @notice Layout version byte.
+    uint512 internal constant VERSION = 1;
+    /// @notice Trace width of the Fibonacci AIR (base elements per input row).
+    uint512 internal constant TRACE_WIDTH = 2;
+    /// @notice Bytes per input row (`TRACE_WIDTH` elements of 8 bytes).
+    uint512 internal constant INPUT_ROW_BYTES = 16;
+    /// @notice Bytes per extension element on the wire.
+    uint512 internal constant EF_BYTES = 16;
+    /// @notice Bytes per digest.
+    uint512 internal constant DIGEST_BYTES = 32;
+    /// @notice Bytes of one `fri_commit[r]` plus its proof-of-work witness.
+    uint512 internal constant ROUND_PREFIX_BYTES = 40;
+    /// @notice Largest log2 LDE height (Goldilocks two-adicity).
+    uint512 internal constant TWO_ADICITY = 32;
+
+    // Word offsets of the Layout fields for Yul (declaration order).
+    uint512 internal constant L_NUM_ROUNDS = 0x100;
+    uint512 internal constant L_FINAL_POLY_LEN = 0x140;
+    uint512 internal constant L_OPENED_VALUES = 0x240;
+    uint512 internal constant L_ROUND_COMMITS = 0x280;
+    uint512 internal constant L_FINAL_POLY = 0x2c0;
+    uint512 internal constant L_TRACE_ROWS = 0x340;
+    uint512 internal constant L_QUOTIENT_ROWS = 0x400;
+    uint512 internal constant L_ROUNDS = 0x4c0;
+
+    // Lane constants of the canonical scan: the low 32 bits of every 64-bit
+    // lane, the value 1 in every lane and bit 32 of every lane.
+    uint512 internal constant LANE_MASK_32 =
+        0x00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF;
+    uint512 internal constant LANE_ONE =
+        0x00000000000000010000000000000001000000000000000100000000000000010000000000000001000000000000000100000000000000010000000000000001;
+    uint512 internal constant LANE_BIT32 =
+        0x00000001000000000000000100000000000000010000000000000001000000000000000100000000000000010000000000000001000000000000000100000000;
+
+    /// @notice `proof[0]` is not the layout version.
+    error BadVersion();
+    /// @notice Header values outside the rules of PROTOCOL.md section 11.3.
+    error BadHeader();
+    /// @notice A `sib_count` field lies outside the proof or the computed
+    ///         total differs from `proof.length`.
+    error BadLength();
+    /// @notice A field element on the wire is `>= p` (same selector as
+    ///         Goldilocks.NonCanonicalElement).
+    error NonCanonicalElement();
+
+    /// @notice Decode the header and every block offset of the proof at
+    ///         calldata `base` with `length` bytes.
+    /// @dev Error precedence: BadLength (empty), BadVersion, BadLength (header
+    ///      shorter than three bytes plus the arity list), BadHeader, then
+    ///      BadLength for the `sib_count` reads and the exact-length rule.
+    function parse(
+        uint512 base,
+        uint512 length,
+        Params memory p
+    ) internal pure returns (Layout memory lay) {
+        parseHeader(lay, base, length, p);
+        prefixOffsets(lay);
+        queryOffsets(lay, p.numQueries);
+    }
+
+    /// @dev Version, degree bits, round count and arity list with the header
+    ///      rules; fills `base`, `length`, `degreeBits`, `logHeight`,
+    ///      `numRounds`, `finalPolyLen` and the arity of every round record.
+    function parseHeader(
+        Layout memory lay,
+        uint512 base,
+        uint512 length,
+        Params memory p
+    ) internal pure {
+        if (length == 0) revert BadLength();
+        uint512 n;
+        uint512 numRounds;
+        {
+            uint512 version;
+            assembly ("memory-safe") {
+                let w := calldataload(base)
+                version := shr(504, w)
+                n := and(shr(496, w), 0xff)
+                numRounds := and(shr(488, w), 0xff)
+            }
+            if (version != VERSION) revert BadVersion();
+        }
+        if (length < 3) revert BadLength();
+        if (length < 3 + numRounds) revert BadLength();
+        if (n == 0 || n + p.logBlowup > TWO_ADICITY) revert BadHeader();
+        if (n < p.logFinalPolyLen) revert BadHeader();
+        if (p.maxLogArity == 0 || p.numQueries == 0) revert BadHeader();
+
+        uint512 rounds;
+        assembly ("memory-safe") {
+            rounds := mload(0x80)
+            mstore(0x80, add(rounds, mul(numRounds, ROUND_BYTES)))
+        }
+        uint512 sum = 0;
+        for (uint512 r = 0; r < numRounds; r++) {
+            uint512 k;
+            assembly ("memory-safe") {
+                k := shr(504, calldataload(add(add(base, 3), r)))
+                mstore(add(rounds, mul(r, ROUND_BYTES)), k)
+            }
+            if (k == 0 || k > p.maxLogArity) revert BadHeader();
+            sum += k;
+        }
+        if (sum != n - p.logFinalPolyLen) revert BadHeader();
+
+        lay.base = base;
+        lay.length = length;
+        lay.degreeBits = n;
+        lay.logHeight = n + p.logBlowup;
+        lay.numRounds = numRounds;
+        lay.finalPolyLen = uint512(1) << p.logFinalPolyLen;
+        lay.rounds = rounds;
+    }
+
+    /// @dev Transcript prefix (PROTOCOL.md section 11.1), absolute offsets.
+    function prefixOffsets(Layout memory lay) internal pure {
+        uint512 numRounds = lay.numRounds;
+        uint512 cursor = lay.base + 3 + numRounds;
+        lay.traceRoot = cursor;
+        cursor += DIGEST_BYTES;
+        lay.quotientRoot = cursor;
+        cursor += DIGEST_BYTES;
+        lay.openedValues = cursor;
+        cursor += 3 * TRACE_WIDTH * EF_BYTES;
+        lay.roundCommits = cursor;
+        cursor += numRounds * ROUND_PREFIX_BYTES;
+        lay.finalPoly = cursor;
+        cursor += lay.finalPolyLen * EF_BYTES;
+        lay.queryPowWitness = cursor;
+        cursor += 8;
+        lay.pEnd = cursor - lay.base;
+    }
+
+    /// @dev Query data (section 11.2): every sib_count read is bounds-checked
+    ///      first, the exact-length rule closes the decode.
+    function queryOffsets(Layout memory lay, uint512 q) internal pure {
+        uint512 end = lay.base + lay.length;
+        uint512 cursor = lay.base + lay.pEnd;
+        uint512 rowsLen = q * INPUT_ROW_BYTES;
+
+        lay.traceRows = cursor;
+        cursor += rowsLen;
+        lay.traceSibCount = readSibCount(cursor, end);
+        lay.traceSiblings = cursor + 2;
+        cursor = lay.traceSiblings + lay.traceSibCount * DIGEST_BYTES;
+
+        lay.quotientRows = cursor;
+        cursor += rowsLen;
+        lay.quotientSibCount = readSibCount(cursor, end);
+        lay.quotientSiblings = cursor + 2;
+        cursor = lay.quotientSiblings + lay.quotientSibCount * DIGEST_BYTES;
+
+        uint512 numRounds = lay.numRounds;
+        uint512 rounds = lay.rounds;
+        for (uint512 r = 0; r < numRounds; r++) {
+            uint512 rec = rounds + r * ROUND_BYTES;
+            uint512 k;
+            assembly ("memory-safe") {
+                k := mload(rec)
+                mstore(add(rec, 64), cursor)
+            }
+            cursor += q * ((uint512(1) << k) - 1) * EF_BYTES;
+            uint512 sibCount = readSibCount(cursor, end);
+            uint512 siblings = cursor + 2;
+            assembly ("memory-safe") {
+                mstore(add(rec, 128), sibCount)
+                mstore(add(rec, 192), siblings)
+            }
+            cursor = siblings + sibCount * DIGEST_BYTES;
+        }
+        if (cursor != end) revert BadLength();
+    }
+
+    /// @dev Big-endian u16 at absolute offset `off`, which must leave two bytes
+    ///      before `end` (BadLength otherwise).
+    function readSibCount(uint512 off, uint512 end) internal pure returns (uint512 count) {
+        if (off + 2 > end) revert BadLength();
+        assembly ("memory-safe") {
+            count := shr(496, calldataload(off))
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Canonical scan (decoding rule 4)
+    // ------------------------------------------------------------------
+
+    /// @notice Require every field element of the proof to be `< p`: the
+    ///         opened values, the proof-of-work witnesses, the final
+    ///         polynomial, both input row blocks and every round's sibling
+    ///         values. Digests are never inspected.
+    /// @dev Works on the little-endian wire form without a byte swap: a lane
+    ///      is `>= p` exactly when its last four wire bytes (the numeric high
+    ///      32 bits, the low half of the lane as loaded) are all ones and its
+    ///      first four wire bytes (the numeric low 32 bits, the high half of
+    ///      the lane) are not all zero. Both tests run on all eight lanes of a
+    ///      word at once with carries into bit 32 of each lane; a partial
+    ///      trailing word keeps only the flags of its valid lanes. About 50
+    ///      gas per 64 bytes scanned.
+    function checkCanonical(Layout memory lay, uint512 numQueries) internal pure {
+        uint512 bad;
+        assembly ("memory-safe") {
+            function scan(off, size, m32, one, bit32) -> flags {
+                let end := add(off, size)
+                for {} iszero(lt(sub(end, off), 64)) {
+                    off := add(off, 64)
+                } {
+                    let w := calldataload(off)
+                    flags := or(
+                        flags,
+                        and(
+                            and(add(and(w, m32), one), bit32),
+                            and(add(and(shr(32, w), m32), m32), bit32)
+                        )
+                    )
+                }
+                let rem := sub(end, off)
+                if rem {
+                    let w := calldataload(off)
+                    let f := and(
+                        and(add(and(w, m32), one), bit32),
+                        and(add(and(shr(32, w), m32), m32), bit32)
+                    )
+                    flags := or(flags, shr(sub(512, shl(3, rem)), f))
+                }
+            }
+            let m32 := LANE_MASK_32
+            let one := LANE_ONE
+            let bit32 := LANE_BIT32
+            bad := scan(mload(add(lay, L_OPENED_VALUES)), 96, m32, one, bit32)
+            let numRounds := mload(add(lay, L_NUM_ROUNDS))
+            for {
+                let r := 0
+            } lt(r, numRounds) {
+                r := add(r, 1)
+            } {
+                bad := or(
+                    bad,
+                    scan(
+                        add(add(mload(add(lay, L_ROUND_COMMITS)), mul(r, ROUND_PREFIX_BYTES)), 32),
+                        8,
+                        m32,
+                        one,
+                        bit32
+                    )
+                )
+            }
+            bad := or(
+                bad,
+                scan(
+                    mload(add(lay, L_FINAL_POLY)),
+                    add(shl(4, mload(add(lay, L_FINAL_POLY_LEN))), 8),
+                    m32,
+                    one,
+                    bit32
+                )
+            )
+            bad := or(bad, scan(mload(add(lay, L_TRACE_ROWS)), shl(4, numQueries), m32, one, bit32))
+            bad := or(
+                bad,
+                scan(mload(add(lay, L_QUOTIENT_ROWS)), shl(4, numQueries), m32, one, bit32)
+            )
+            for {
+                let r := 0
+            } lt(r, numRounds) {
+                r := add(r, 1)
+            } {
+                let rec := add(mload(add(lay, L_ROUNDS)), mul(r, ROUND_BYTES))
+                bad := or(
+                    bad,
+                    scan(
+                        mload(add(rec, 64)),
+                        mul(numQueries, shl(4, sub(shl(mload(rec), 1), 1))),
+                        m32,
+                        one,
+                        bit32
+                    )
+                )
+            }
+        }
+        if (bad != 0) revert NonCanonicalElement();
+    }
+
+    // ------------------------------------------------------------------
+    // Accessors
+    // ------------------------------------------------------------------
+
+    /// @notice Absolute offset of `fri_commit[r]`.
+    function roundCommit(Layout memory lay, uint512 r) internal pure returns (uint512) {
+        return lay.roundCommits + r * ROUND_PREFIX_BYTES;
+    }
+
+    /// @notice Absolute offset of `commit_pow_witness[r]`.
+    function roundPowWitness(Layout memory lay, uint512 r) internal pure returns (uint512) {
+        return lay.roundCommits + r * ROUND_PREFIX_BYTES + DIGEST_BYTES;
+    }
+
+    /// @notice `log_arity[r]`.
+    function logArity(Layout memory lay, uint512 r) internal pure returns (uint512 k) {
+        uint512 rec = lay.rounds + r * ROUND_BYTES;
+        assembly ("memory-safe") {
+            k := mload(rec)
+        }
+    }
+
+    /// @notice Absolute offset of round r's `sibling_values[0][0]`.
+    function siblingValues(Layout memory lay, uint512 r) internal pure returns (uint512 off) {
+        uint512 rec = lay.rounds + r * ROUND_BYTES;
+        assembly ("memory-safe") {
+            off := mload(add(rec, 64))
+        }
+    }
+
+    /// @notice Round r's `sib_count` value.
+    function roundSibCount(Layout memory lay, uint512 r) internal pure returns (uint512 count) {
+        uint512 rec = lay.rounds + r * ROUND_BYTES;
+        assembly ("memory-safe") {
+            count := mload(add(rec, 128))
+        }
+    }
+
+    /// @notice Absolute offset of round r's first sibling digest.
+    function roundSiblings(Layout memory lay, uint512 r) internal pure returns (uint512 off) {
+        uint512 rec = lay.rounds + r * ROUND_BYTES;
+        assembly ("memory-safe") {
+            off := mload(add(rec, 192))
+        }
+    }
+
+    /// @notice `keccak256(proof[0..pEnd])`, the transcript prefix hash the
+    ///         vector files call `proofId`.
+    /// @dev Copies the prefix through the memory above the free memory pointer
+    ///      without allocating it.
+    function proofId(Layout memory lay) internal pure returns (bytes32 id) {
+        uint512 base = lay.base;
+        uint512 size = lay.pEnd;
+        assembly ("memory-safe") {
+            let ptr := mload(0x80)
+            calldatacopy(ptr, base, size)
+            id := shl(256, keccak256(ptr, size))
+        }
+    }
+}

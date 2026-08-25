@@ -2,18 +2,150 @@
 pragma hyperion >=0.0;
 
 import "./interfaces/IStarkVerifier.hyp";
+import "./lib/Goldilocks.hyp";
+import "./lib/Fp2.hyp";
+import "./lib/KeccakChallenger.hyp";
+import "./lib/ProofLayout.hyp";
+import "./lib/FriVerifier.hyp";
+import "./air/FibonacciAir.hyp";
+
+/// @title StarkVerifierCore
+/// @notice The verification flow of docs/PROTOCOL.md section 12 for the
+///         Fibonacci AIR, parameterised at run time by `ProofLayout.Params`
+///         so that one implementation serves every preset: decode and scan
+///         the proof, absorb the instance (transcript steps 1 to 10), check
+///         the constraint identity, then hand the context to `FriVerifier`.
+/// @dev Abstract so the deployable contract binds the preset through
+///      compile-time constants (`StarkVerifier` below) while the FRI harness
+///      binds it through calldata. Every failure is a custom error; the
+///      order in which they can fire is fixed by section 12 (decode errors,
+///      OodPointInDomain, OodMismatch, PowFailed, the Merkle errors of the
+///      input batches, ZeroDenominator, FinalPolyMismatch, the Merkle errors
+///      of the rounds). Memory: one `FriVerifier.Ctx` per call, allocated
+///      from the free memory pointer; nothing is written to storage.
+abstract contract StarkVerifierCore {
+    /// @notice Wire size of the public values: three field elements.
+    uint512 internal constant PV_BYTES = 24;
+
+    /// @dev Decode (BadVersion, BadHeader, BadLength), scan every element
+    ///      (NonCanonicalElement), validate the public values (BadLength,
+    ///      NonCanonicalElement), then build the context with its tables and
+    ///      the numeric prefix values.
+    function _prepare(
+        uint512 base,
+        uint512 length,
+        uint512 pvOff,
+        uint512 pvLen,
+        ProofLayout.Params memory p
+    ) internal pure returns (FriVerifier.Ctx memory c) {
+        ProofLayout.Layout memory lay = ProofLayout.parse(base, length, p);
+        ProofLayout.checkCanonical(lay, p.numQueries);
+        if (pvLen != PV_BYTES) revert ProofLayout.BadLength();
+        Goldilocks.cdElem(pvOff);
+        Goldilocks.cdElem(pvOff + 8);
+        Goldilocks.cdElem(pvOff + 16);
+        FriVerifier.init(c, lay, p);
+        FriVerifier.decodePrefix(c);
+    }
+
+    /// @dev Transcript steps 1 to 10: the three instance elements, the trace
+    ///      root, the public values, `alpha`, the quotient root, `zeta` (and
+    ///      the selectors, which reject a `zeta` on the trace domain),
+    ///      `zeta_next = zeta * g_n`, the opened values.
+    function _absorbInstance(
+        FriVerifier.Ctx memory c,
+        uint512 pvOff
+    ) internal view returns (FibonacciAir.Selectors memory s) {
+        KeccakChallenger.State memory ch = c.ch;
+        ProofLayout.Layout memory lay = c.lay;
+        uint512 n = lay.degreeBits;
+        KeccakChallenger.observeU64LE(ch, n);
+        KeccakChallenger.observeU64LE(ch, n);
+        KeccakChallenger.observeU64LE(ch, 0);
+        KeccakChallenger.observeCalldata(ch, lay.traceRoot, 32);
+        KeccakChallenger.observeCalldata(ch, pvOff, PV_BYTES);
+        (c.alpha0, c.alpha1) = KeccakChallenger.sampleExt(ch);
+        KeccakChallenger.observeCalldata(ch, lay.quotientRoot, 32);
+        (uint512 z0, uint512 z1) = KeccakChallenger.sampleExt(ch);
+        c.zeta0 = z0;
+        c.zeta1 = z1;
+        s = FibonacciAir.selectors(n, z0, z1);
+        (c.zetaNext0, c.zetaNext1) = Fp2.mulBase(z0, z1, Goldilocks.twoAdicGen(n));
+        KeccakChallenger.observeCalldata(ch, lay.openedValues, 96);
+    }
+
+    /// @dev Check-order step 3: `acc / Z_H(zeta) == quotient` (OodMismatch).
+    function _checkConstraints(
+        FriVerifier.Ctx memory c,
+        FibonacciAir.Selectors memory s,
+        uint512 pvOff
+    ) internal pure {
+        uint512 pv;
+        assembly ("memory-safe") {
+            pv := mload(0x80)
+            mstore(0x80, add(pv, 192))
+        }
+        uint512 v = Goldilocks.cdElem(pvOff);
+        assembly ("memory-safe") {
+            mstore(pv, v)
+        }
+        v = Goldilocks.cdElem(pvOff + 8);
+        assembly ("memory-safe") {
+            mstore(add(pv, 64), v)
+        }
+        v = Goldilocks.cdElem(pvOff + 16);
+        assembly ("memory-safe") {
+            mstore(add(pv, 128), v)
+        }
+        FibonacciAir.check(s, c.alpha0, c.alpha1, c.opened, pv);
+    }
+
+    /// @dev The whole flow; returns true, reverts otherwise.
+    function _verify(
+        bytes calldata proof,
+        bytes calldata publicValues,
+        ProofLayout.Params memory p
+    ) internal view returns (bool) {
+        uint512 base;
+        uint512 length;
+        uint512 pvOff;
+        uint512 pvLen;
+        assembly ("memory-safe") {
+            base := proof.offset
+            length := proof.length
+            pvOff := publicValues.offset
+            pvLen := publicValues.length
+        }
+        FriVerifier.Ctx memory c = _prepare(base, length, pvOff, pvLen, p);
+        FibonacciAir.Selectors memory s = _absorbInstance(c, pvOff);
+        _checkConstraints(c, s, pvOff);
+        FriVerifier.verifyFri(c);
+        return true;
+    }
+}
 
 /// @title StarkVerifier
-/// @notice Placeholder for the Plonky3 uni-stark verifier (Goldilocks, quadratic
-///         extension, two-adic FRI, keccak256 Merkle and Fiat-Shamir).
-/// @dev Milestone M1 stub: every verification reverts with NotImplemented() and
-///      PARAMS() reports zeros. The real implementation lands with the
-///      Goldilocks, Fp2, KeccakChallenger, MerkleMultiProof and FriVerifier
-///      libraries (milestones M2 to M6). The deployable surface (this
-///      interface, the parameter getter and the custom error) is final.
-contract StarkVerifier is IStarkVerifier {
-    /// @notice Raised while the verifier body is unimplemented.
-    error NotImplemented();
+/// @notice Deployable Plonky3 uni-stark verifier for the Fibonacci AIR over
+///         Goldilocks with the quadratic extension, two-adic FRI and keccak256
+///         Merkle trees and Fiat-Shamir (docs/PROTOCOL.md). One deployment
+///         verifies one parameter preset; the six constants below select it
+///         at compile time and default to preset c3 (`docs/DECISIONS.md`).
+///         The contract suite compiles this file once per preset with the
+///         constants substituted (`test/contracts/stark.test.js`).
+/// @dev `verify` returns true for a valid proof and reverts with one of the
+///      custom errors of section 12 otherwise: BadVersion, BadHeader,
+///      BadLength, NonCanonicalElement, OodPointInDomain, OodMismatch,
+///      PowFailed, DuplicateOpeningMismatch, SiblingCountMismatch,
+///      MerkleRootMismatch, ZeroDenominator, FinalPolyMismatch.
+contract StarkVerifier is StarkVerifierCore, IStarkVerifier {
+    // Preset constants (docs/PROTOCOL.md section 1.2). Keep the six
+    // declarations on single lines: the contract suite substitutes them.
+    uint512 internal constant LOG_BLOWUP = 3;
+    uint512 internal constant LOG_FINAL_POLY_LEN = 3;
+    uint512 internal constant MAX_LOG_ARITY = 3;
+    uint512 internal constant NUM_QUERIES = 34;
+    uint512 internal constant COMMIT_POW_BITS = 0;
+    uint512 internal constant QUERY_POW_BITS = 16;
 
     /// @notice FRI and soundness parameters this deployment verifies against.
     /// @return logBlowup log2 of the LDE blowup factor
@@ -34,11 +166,29 @@ contract StarkVerifier is IStarkVerifier {
             uint512 logFinalPolyLen
         )
     {
-        return (0, 0, 0, 0, 0, 0);
+        return (
+            LOG_BLOWUP,
+            NUM_QUERIES,
+            QUERY_POW_BITS,
+            COMMIT_POW_BITS,
+            MAX_LOG_ARITY,
+            LOG_FINAL_POLY_LEN
+        );
     }
 
     /// @inheritdoc IStarkVerifier
-    function verify(bytes calldata, bytes calldata) external pure returns (bool) {
-        revert NotImplemented();
+    function verify(
+        bytes calldata proof,
+        bytes calldata publicValues
+    ) external view override returns (bool) {
+        ProofLayout.Params memory p = ProofLayout.Params({
+            logBlowup: LOG_BLOWUP,
+            logFinalPolyLen: LOG_FINAL_POLY_LEN,
+            maxLogArity: MAX_LOG_ARITY,
+            numQueries: NUM_QUERIES,
+            commitPowBits: COMMIT_POW_BITS,
+            queryPowBits: QUERY_POW_BITS
+        });
+        return _verify(proof, publicValues, p);
     }
 }

@@ -1,0 +1,1078 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "./Goldilocks.hyp";
+import "./Fp2.hyp";
+import "./KeccakChallenger.hyp";
+import "./MerkleMultiProof.hyp";
+import "./ProofLayout.hyp";
+
+/// @title FriVerifier
+/// @notice The PCS side of the verifier (docs/PROTOCOL.md sections 6 to 9 and
+///         check-order steps 4 to 8): the FRI transcript, the two input
+///         batches, the reduced openings, the fold chains with the final
+///         polynomial check, and the per-round Merkle checks. Executable
+///         specification: `test/lib/fri.js` and `test/lib/verifier.js`.
+/// @dev All state lives in one memory context (`Ctx`) so that every phase
+///      takes a single pointer; hot loops are Yul and read the context by the
+///      word offsets below (one 64-byte word per field, in declaration
+///      order). Memory layout of the arrays the context owns, all allocated
+///      once by `init` from the free memory pointer:
+///        betas      R x (c0, c1)                 64-byte words
+///        indices    Q                            query indices at height H
+///        keys       Q                            MerkleMultiProof.sortKeys output
+///        tab        H                            tab[i] = g_{i+1}
+///        tabInv     H                            tabInv[i] = g_{i+1}^-1
+///        wTab       2^maxK - 1                   INV2 * g_m^-rev(j, m-1) at 2^(m-1) - 1 + j
+///        opened     12                           trace_local, trace_next, quotient_chunk (c0, c1 each)
+///        finalPoly  2 * 2^lf                     coefficients, constant term first (c0, c1 each)
+///        ro         Q x (c0, c1)                 reduced openings
+///        leaves     R x Q                        round leaf digests, round-major
+///        rowBuf     16 * 2^maxK + slack bytes    one row in wire form
+///        vals       2 * 2^maxK                   one row as numbers (c0, c1 each)
+///        scratch    Q                            per-query input-block leaf digests
+///        kp         17                           lane masks and opening constants
+///        qs         6                            fold-chain state: index, value (c0, c1), height, k, sInv
+///        pw, sw     ceil(H / 4) x 16             windowed products of tab and tabInv (see below)
+///        gk         2^(maxK+1) - 2               g_k^rev(pos, k) at 2^k - 2 + pos, k = 1..maxK
+///      Every domain point is a product over the set bits of an index of the
+///      table `g_{i+1}` (the bit-reversal of Plonky3 `reverse_bits_len` folds
+///      into the table order): the query point is `7 * prod tab[i]` over the
+///      bits of the height-H index, the coset start inverse of a round is
+///      `prod tabInv[i]` over the bits `k..h` of the round-entry index, and
+///      the final evaluation point is `prod tab[i]` over the bits of the
+///      final index. The products are taken four bits at a time from the
+///      window tables `pw[w][v] = prod tab[4w + b]` over the bits b of the
+///      nibble v (`sw` likewise over tabInv), so a point costs one mulmod per
+///      window instead of one per bit. A fold chain carries its current
+///      domain point `P_r = g_{h_r}^rev(idx_r, h_r)` and its inverse: the
+///      query point is `7 P_0`, the coset start of a round is
+///      `s = P_r * g_k^-rev(pos, k)` (so `sInv = P_r^-1 * gk[k][pos]`), the
+///      next point is `P_{r+1} = P_r^(2^k)` (the k squarings of the fold),
+///      and the final evaluation point is `P_R` itself. The fold is the
+///      binary decomposition of PROTOCOL.md section 8.3 with the per-step
+///      factor `1 / (2 y) = sInv * wTab[m][j]`.
+library FriVerifier {
+    struct Ctx {
+        ProofLayout.Layout lay;
+        ProofLayout.Params prm;
+        KeccakChallenger.State ch;
+        uint512 alpha0;
+        uint512 alpha1;
+        uint512 zeta0;
+        uint512 zeta1;
+        uint512 zetaNext0;
+        uint512 zetaNext1;
+        uint512 friAlpha0;
+        uint512 friAlpha1;
+        uint512 betas;
+        uint512 indices;
+        uint512 keys;
+        uint512 tab;
+        uint512 tabInv;
+        uint512 wTab;
+        uint512 opened;
+        uint512 finalPoly;
+        uint512 ro;
+        uint512 leaves;
+        uint512 rowBuf;
+        uint512 vals;
+        uint512 scratch;
+        uint512 kp;
+        uint512 qs;
+        uint512 pw;
+        uint512 sw;
+        uint512 gk;
+    }
+
+    // Word offsets of the Ctx fields for Yul (declaration order, 64 bytes each).
+    uint512 internal constant C_LAY = 0x000;
+    uint512 internal constant C_PRM = 0x040;
+    uint512 internal constant C_CH = 0x080;
+    uint512 internal constant C_ALPHA0 = 0x0c0;
+    uint512 internal constant C_ALPHA1 = 0x100;
+    uint512 internal constant C_ZETA0 = 0x140;
+    uint512 internal constant C_ZETA1 = 0x180;
+    uint512 internal constant C_ZETANEXT0 = 0x1c0;
+    uint512 internal constant C_ZETANEXT1 = 0x200;
+    uint512 internal constant C_FRIALPHA0 = 0x240;
+    uint512 internal constant C_FRIALPHA1 = 0x280;
+    uint512 internal constant C_BETAS = 0x2c0;
+    uint512 internal constant C_INDICES = 0x300;
+    uint512 internal constant C_KEYS = 0x340;
+    uint512 internal constant C_TAB = 0x380;
+    uint512 internal constant C_TABINV = 0x3c0;
+    uint512 internal constant C_WTAB = 0x400;
+    uint512 internal constant C_OPENED = 0x440;
+    uint512 internal constant C_FINALPOLY = 0x480;
+    uint512 internal constant C_RO = 0x4c0;
+    uint512 internal constant C_LEAVES = 0x500;
+    uint512 internal constant C_ROWBUF = 0x540;
+    uint512 internal constant C_VALS = 0x580;
+    uint512 internal constant C_SCRATCH = 0x5c0;
+    uint512 internal constant C_KP = 0x600;
+    uint512 internal constant C_QS = 0x640;
+    uint512 internal constant C_PW = 0x680;
+    uint512 internal constant C_SW = 0x6c0;
+    uint512 internal constant C_GK = 0x700;
+    /// @notice Bits per window of the product tables.
+    uint512 internal constant WINDOW_BITS = 4;
+    /// @notice Words per window (2^WINDOW_BITS entries).
+    uint512 internal constant WINDOW_WORDS = 16;
+
+    // Word offsets of ProofLayout.Layout and ProofLayout.Params fields for Yul.
+    uint512 internal constant L_LOG_HEIGHT = 0x0c0;
+    uint512 internal constant L_NUM_ROUNDS = 0x100;
+    uint512 internal constant L_FINAL_POLY_LEN = 0x140;
+    uint512 internal constant L_OPENED_VALUES = 0x240;
+    uint512 internal constant L_FINAL_POLY = 0x2c0;
+    uint512 internal constant L_TRACE_ROWS = 0x340;
+    uint512 internal constant L_QUOTIENT_ROWS = 0x400;
+    uint512 internal constant L_ROUNDS = 0x4c0;
+    uint512 internal constant PR_NUM_QUERIES = 0x0c0;
+
+    // Layout of the kp block (17 words): three lane masks, then the opening
+    // constants a, a^4, a^5, a^2, a^3 (c0, c1 each), K0 and K1 (c0, c1 each).
+    uint512 internal constant KP_M8 = 0x000;
+    uint512 internal constant KP_M16 = 0x040;
+    uint512 internal constant KP_M32 = 0x080;
+    uint512 internal constant KP_A1 = 0x0c0;
+    uint512 internal constant KP_A4 = 0x140;
+    uint512 internal constant KP_A5 = 0x1c0;
+    uint512 internal constant KP_A2 = 0x240;
+    uint512 internal constant KP_A3 = 0x2c0;
+    uint512 internal constant KP_K0 = 0x340;
+    uint512 internal constant KP_K1 = 0x3c0;
+    uint512 internal constant KP_WORDS = 17;
+
+    // Layout of the qs block (8 words): index, value c0, value c1, height,
+    // the log arity and the coset start inverse of the current round, the
+    // current domain point P and its inverse.
+    uint512 internal constant QS_INDEX = 0x000;
+    uint512 internal constant QS_V0 = 0x040;
+    uint512 internal constant QS_V1 = 0x080;
+    uint512 internal constant QS_HEIGHT = 0x0c0;
+    uint512 internal constant QS_K = 0x100;
+    uint512 internal constant QS_SINV = 0x140;
+    uint512 internal constant QS_P = 0x180;
+    uint512 internal constant QS_PINV = 0x1c0;
+    uint512 internal constant QS_WORDS = 8;
+
+    /// @dev Literal copies of the field constants for Yul.
+    uint512 internal constant P = 0xFFFFFFFF00000001;
+    uint512 internal constant INV2 = 0x7FFFFFFF80000001;
+    /// @dev 1/7 mod p = (p + 1) / 7.
+    uint512 internal constant INV7 = 0x249249246DB6DB6E;
+    uint512 internal constant MASK64 = 0xFFFFFFFFFFFFFFFF;
+    uint512 internal constant LANE_MASK_8 =
+        0x00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF;
+    uint512 internal constant LANE_MASK_16 =
+        0x0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF0000FFFF;
+    uint512 internal constant LANE_MASK_32 =
+        0x00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF;
+
+    /// @notice A proof-of-work check failed (commit rounds first, then the query PoW).
+    error PowFailed();
+    /// @notice A query point coincides with `zeta` or `zeta_next`.
+    error ZeroDenominator();
+    /// @notice A fold chain does not end on the final polynomial.
+    error FinalPolyMismatch();
+
+    // ------------------------------------------------------------------
+    // Setup
+    // ------------------------------------------------------------------
+
+    /// @notice Bind the context to a parsed layout and its parameters,
+    ///         allocate every array and build the domain tables.
+    function init(
+        Ctx memory c,
+        ProofLayout.Layout memory lay,
+        ProofLayout.Params memory prm
+    ) internal pure {
+        c.lay = lay;
+        c.prm = prm;
+        KeccakChallenger.init(c.ch);
+        uint512 q = prm.numQueries;
+        uint512 numRounds = lay.numRounds;
+        uint512 h = lay.logHeight;
+        uint512 maxK = prm.maxLogArity;
+        uint512 fpl = lay.finalPolyLen;
+        assembly ("memory-safe") {
+            let arityMax := shl(maxK, 1)
+            let ptr := mload(0x80)
+            mstore(add(c, C_BETAS), ptr)
+            ptr := add(ptr, shl(7, numRounds))
+            mstore(add(c, C_INDICES), ptr)
+            ptr := add(ptr, shl(6, q))
+            mstore(add(c, C_TAB), ptr)
+            ptr := add(ptr, shl(6, 32))
+            mstore(add(c, C_TABINV), ptr)
+            ptr := add(ptr, shl(6, 32))
+            mstore(add(c, C_WTAB), ptr)
+            ptr := add(ptr, shl(6, arityMax))
+            mstore(add(c, C_OPENED), ptr)
+            ptr := add(ptr, shl(6, 12))
+            mstore(add(c, C_FINALPOLY), ptr)
+            ptr := add(ptr, shl(7, fpl))
+            mstore(add(c, C_RO), ptr)
+            ptr := add(ptr, shl(7, q))
+            mstore(add(c, C_LEAVES), ptr)
+            ptr := add(ptr, shl(6, mul(numRounds, q)))
+            mstore(add(c, C_ROWBUF), ptr)
+            ptr := add(ptr, and(add(add(shl(4, arityMax), 64), 63), not(63)))
+            mstore(add(c, C_VALS), ptr)
+            // decodeRow writes whole words of eight lanes: at least 8 words.
+            ptr := add(ptr, shl(6, add(shl(1, arityMax), 8)))
+            mstore(add(c, C_SCRATCH), ptr)
+            ptr := add(ptr, shl(6, q))
+            mstore(add(c, C_KP), ptr)
+            mstore(ptr, LANE_MASK_8)
+            mstore(add(ptr, 64), LANE_MASK_16)
+            mstore(add(ptr, 128), LANE_MASK_32)
+            ptr := add(ptr, shl(6, KP_WORDS))
+            mstore(add(c, C_QS), ptr)
+            ptr := add(ptr, shl(6, QS_WORDS))
+            let windows := shr(2, add(h, 3))
+            mstore(add(c, C_PW), ptr)
+            ptr := add(ptr, shl(6, mul(windows, WINDOW_WORDS)))
+            mstore(add(c, C_SW), ptr)
+            ptr := add(ptr, shl(6, mul(windows, WINDOW_WORDS)))
+            mstore(add(c, C_GK), ptr)
+            ptr := add(ptr, shl(7, arityMax))
+            mstore(0x80, ptr)
+        }
+        buildTables(c.tab, c.tabInv, h);
+        buildWTable(c.wTab, maxK);
+        buildWindows(c.pw, c.tab, h);
+        buildWindows(c.sw, c.tabInv, h);
+        buildGkTable(c.gk, c.tab, maxK);
+    }
+
+    /// @notice `gk[2^k - 2 + pos] = g_k^rev(pos, k)` for `1 <= k <= maxK` and
+    ///         `0 <= pos < 2^k`: the factor between the domain point of a
+    ///         row position and the coset start of its row.
+    function buildGkTable(uint512 gk, uint512 tab, uint512 maxK) internal pure {
+        assembly ("memory-safe") {
+            for {
+                let k := 1
+            } iszero(gt(k, maxK)) {
+                k := add(k, 1)
+            } {
+                let g := mload(add(tab, shl(6, sub(k, 1))))
+                let base := add(gk, shl(6, sub(shl(k, 1), 2)))
+                let u := 1
+                for {
+                    let t := 0
+                } lt(t, shl(k, 1)) {
+                    t := add(t, 1)
+                } {
+                    // rev(t, k) bit by bit; k is at most a few bits.
+                    let r := 0
+                    for {
+                        let b := 0
+                    } lt(b, k) {
+                        b := add(b, 1)
+                    } {
+                        r := or(shl(1, r), and(shr(b, t), 1))
+                    }
+                    mstore(add(base, shl(6, r)), u)
+                    u := mulmod(u, g, P)
+                }
+            }
+        }
+    }
+
+    /// @notice `win[16 w + v] = prod tab[4 w + b]` over the set bits `b` of the
+    ///         nibble `v`, for every window `w` covering the `h` index bits.
+    /// @dev Entries of table positions at or above `h` are never selected
+    ///      (indices are below 2^h); they read `tab` past `h`, which
+    ///      buildTables leaves as whatever the memory held, and stay unused.
+    function buildWindows(uint512 win, uint512 tab, uint512 h) internal pure {
+        assembly ("memory-safe") {
+            let windows := shr(2, add(h, 3))
+            for {
+                let w := 0
+            } lt(w, windows) {
+                w := add(w, 1)
+            } {
+                let base := add(win, shl(10, w))
+                mstore(base, 1)
+                for {
+                    let v := 1
+                } lt(v, WINDOW_WORDS) {
+                    v := add(v, 1)
+                } {
+                    // lowest set bit b of v: entry = entry[v without b] * tab[4w + b]
+                    let b := 0
+                    if iszero(and(v, 1)) {
+                        b := 1
+                        if iszero(and(v, 2)) {
+                            b := 2
+                            if iszero(and(v, 4)) {
+                                b := 3
+                            }
+                        }
+                    }
+                    mstore(
+                        add(base, shl(6, v)),
+                        mulmod(
+                            mload(add(base, shl(6, and(v, sub(v, 1))))),
+                            mload(add(tab, shl(6, add(shl(2, w), b)))),
+                            P
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /// @notice The product of a window table over the set bits of `index`
+    ///         (`h` bits): the domain point of a bit-reversed row index.
+    function windowProduct(
+        uint512 win,
+        uint512 index,
+        uint512 h
+    ) internal pure returns (uint512 acc) {
+        assembly ("memory-safe") {
+            acc := 1
+            for {
+                let end := add(win, shl(6, mul(shr(2, add(h, 3)), WINDOW_WORDS)))
+            } lt(win, end) {
+                win := add(win, shl(6, WINDOW_WORDS))
+            } {
+                acc := mulmod(acc, mload(add(win, shl(6, and(index, 15)))), P)
+                index := shr(4, index)
+            }
+        }
+    }
+
+    /// @notice `tab[i] = g_{i+1}` and `tabInv[i] = g_{i+1}^-1` for `i < h`
+    ///         (rounded up to a whole window of four).
+    /// @dev Reads the packed generator image through the memory above the
+    ///      free memory pointer without allocating it.
+    function buildTables(uint512 tab, uint512 tabInv, uint512 h) internal pure {
+        h = ((h + 3) >> 2) << 2;
+        uint512 img;
+        assembly ("memory-safe") {
+            img := mload(0x80)
+        }
+        Goldilocks.loadTwoAdicTables(img);
+        for (uint512 i = 0; i < h; i++) {
+            uint512 g = Goldilocks.twoAdicGenAt(img, i + 1);
+            uint512 gi = Goldilocks.twoAdicGenInvAt(img, i + 1);
+            assembly ("memory-safe") {
+                mstore(add(tab, shl(6, i)), g)
+                mstore(add(tabInv, shl(6, i)), gi)
+            }
+        }
+    }
+
+    /// @notice `wTab[2^(m-1) - 1 + j] = INV2 * g_m^-rev(j, m-1)` for
+    ///         `1 <= m <= maxK`, `0 <= j < 2^(m-1)`: the factor `1 / (2 y)`
+    ///         of a fold pair up to the coset start.
+    function buildWTable(uint512 wTab, uint512 maxK) internal pure {
+        for (uint512 m = 1; m <= maxK; m++) {
+            uint512 gInv = Goldilocks.twoAdicGenInv(m);
+            uint512 half = uint512(1) << (m - 1);
+            uint512 u = INV2;
+            for (uint512 t = 0; t < half; t++) {
+                uint512 slot = half - 1 + Goldilocks.rev(t, m - 1);
+                assembly ("memory-safe") {
+                    mstore(add(wTab, shl(6, slot)), u)
+                }
+                u = Goldilocks.mul(u, gInv);
+            }
+        }
+    }
+
+    /// @notice Decode the opened values (12 elements) and the final
+    ///         polynomial (2^lf extension elements) from the prefix into the
+    ///         numeric arrays. The canonical scan has already validated them.
+    function decodePrefix(Ctx memory c) internal pure {
+        uint512 ov = c.lay.openedValues;
+        uint512 fp = c.lay.finalPoly;
+        uint512 nLanes = 2 * c.lay.finalPolyLen;
+        uint512 opened = c.opened;
+        uint512 finalPoly = c.finalPoly;
+        uint512 kp = c.kp;
+        assembly ("memory-safe") {
+            function lanesAt(off, mp) -> w {
+                w := calldataload(off)
+                let m := mload(mp)
+                w := or(shl(8, and(w, m)), and(shr(8, w), m))
+                m := mload(add(mp, 64))
+                w := or(shl(16, and(w, m)), and(shr(16, w), m))
+                m := mload(add(mp, 128))
+                w := or(shl(32, and(w, m)), and(shr(32, w), m))
+            }
+            let w := lanesAt(ov, kp)
+            for {
+                let l := 0
+            } lt(l, 8) {
+                l := add(l, 1)
+            } {
+                mstore(add(opened, shl(6, l)), and(shr(sub(448, shl(6, l)), w), MASK64))
+            }
+            w := lanesAt(add(ov, 64), kp)
+            for {
+                let l := 0
+            } lt(l, 4) {
+                l := add(l, 1)
+            } {
+                mstore(add(opened, shl(6, add(l, 8))), and(shr(sub(448, shl(6, l)), w), MASK64))
+            }
+            for {
+                let l := 0
+            } lt(l, nLanes) {
+                l := add(l, 1)
+            } {
+                if iszero(and(l, 7)) {
+                    w := lanesAt(add(fp, shl(3, l)), kp)
+                }
+                mstore(
+                    add(finalPoly, shl(6, l)),
+                    and(shr(sub(448, shl(6, and(l, 7))), w), MASK64)
+                )
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Transcript steps 11 to 16
+    // ------------------------------------------------------------------
+
+    /// @notice Sample `fri_alpha`, absorb the round commitments with their
+    ///         proof-of-work witnesses and sample the betas, absorb the final
+    ///         polynomial and the arities, check the query proof of work and
+    ///         sample the query indices.
+    function friTranscript(Ctx memory c) internal pure {
+        ProofLayout.Layout memory lay = c.lay;
+        KeccakChallenger.State memory ch = c.ch;
+        (c.friAlpha0, c.friAlpha1) = KeccakChallenger.sampleExt(ch);
+        uint512 numRounds = lay.numRounds;
+        uint512 commitBits = c.prm.commitPowBits;
+        uint512 betas = c.betas;
+        for (uint512 r = 0; r < numRounds; r++) {
+            uint512 off = ProofLayout.roundCommit(lay, r);
+            KeccakChallenger.observeCalldata(ch, off, 32);
+            if (commitBits != 0) {
+                uint512 witness = Goldilocks.cdElem(off + 32);
+                if (!KeccakChallenger.checkWitness(ch, commitBits, witness)) revert PowFailed();
+            }
+            (uint512 b0, uint512 b1) = KeccakChallenger.sampleExt(ch);
+            assembly ("memory-safe") {
+                mstore(add(betas, shl(7, r)), b0)
+                mstore(add(betas, add(shl(7, r), 64)), b1)
+            }
+        }
+        KeccakChallenger.observeCalldata(ch, lay.finalPoly, lay.finalPolyLen * 16);
+        for (uint512 r = 0; r < numRounds; r++) {
+            KeccakChallenger.observeU64LE(ch, ProofLayout.logArity(lay, r));
+        }
+        uint512 queryBits = c.prm.queryPowBits;
+        if (queryBits != 0) {
+            uint512 witness = Goldilocks.cdElem(lay.queryPowWitness);
+            if (!KeccakChallenger.checkWitness(ch, queryBits, witness)) revert PowFailed();
+        }
+        uint512 h = lay.logHeight;
+        uint512 q = c.prm.numQueries;
+        uint512 indices = c.indices;
+        for (uint512 i = 0; i < q; i++) {
+            uint512 v = KeccakChallenger.sampleBits(ch, h);
+            assembly ("memory-safe") {
+                mstore(add(indices, shl(6, i)), v)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Input batches (check-order step 5)
+    // ------------------------------------------------------------------
+
+    /// @notice Sort the query indices once, then verify the trace and the
+    ///         quotient batch against their roots.
+    function inputBlocks(Ctx memory c) internal pure {
+        ProofLayout.Layout memory lay = c.lay;
+        c.keys = MerkleMultiProof.sortKeys(c.indices, c.prm.numQueries);
+        verifyInputBlock(c, lay.traceRows, lay.traceRoot, lay.traceSiblings, lay.traceSibCount);
+        verifyInputBlock(
+            c,
+            lay.quotientRows,
+            lay.quotientRoot,
+            lay.quotientSiblings,
+            lay.quotientSibCount
+        );
+    }
+
+    /// @dev One input batch: hash every 16-byte row from calldata, gather the
+    ///      digests onto the unique leaves (DuplicateOpeningMismatch), walk
+    ///      the pruned proof (SiblingCountMismatch, MerkleRootMismatch). The
+    ///      free memory pointer is restored afterwards, so the arrays gather
+    ///      allocates do not accumulate across blocks.
+    function verifyInputBlock(
+        Ctx memory c,
+        uint512 rows,
+        uint512 rootOff,
+        uint512 sibOff,
+        uint512 sibCount
+    ) internal pure {
+        uint512 fmp;
+        assembly ("memory-safe") {
+            fmp := mload(0x80)
+        }
+        (uint512 u, uint512 d, uint512 m) = gatherInput(c, rows);
+        uint512 root = digestAt(rootOff);
+        uint512 height = c.lay.logHeight;
+        MerkleMultiProof.verifyBlock(root, height, u, d, m, sibOff, sibCount);
+        assembly ("memory-safe") {
+            mstore(0x80, fmp)
+        }
+    }
+
+    /// @dev Hash every 16-byte row of an input block from calldata into the
+    ///      scratch array and gather the digests onto the unique leaves.
+    function gatherInput(
+        Ctx memory c,
+        uint512 rows
+    ) internal pure returns (uint512 u, uint512 d, uint512 m) {
+        uint512 q = c.prm.numQueries;
+        uint512 digests = c.scratch;
+        assembly ("memory-safe") {
+            for {
+                let i := 0
+            } lt(i, q) {
+                i := add(i, 1)
+            } {
+                calldatacopy(0x00, add(rows, shl(4, i)), 16)
+                mstore(add(digests, shl(6, i)), keccak256(0x00, 16))
+            }
+        }
+        (u, d, m) = MerkleMultiProof.gather(c.keys, digests, q, 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Reduced openings (check-order step 6)
+    // ------------------------------------------------------------------
+
+    /// @notice `ro[q]` for every query: the alpha-weighted quotients of the
+    ///         opened values against the opened rows (PROTOCOL.md section 7),
+    ///         with all `2Q` denominators inverted in one batch.
+    function reducedOpenings(Ctx memory c) internal view {
+        uint512 q = c.prm.numQueries;
+        uint512 fmp;
+        uint512 den;
+        assembly ("memory-safe") {
+            fmp := mload(0x80)
+            den := fmp
+            mstore(0x80, add(den, shl(8, q)))
+        }
+        queryPoints(c);
+        if (!fillDenominators(c, den)) revert ZeroDenominator();
+        Fp2.batchInverse(den, 2 * q);
+        openingConstants(c);
+        combineOpenings(c, den);
+        assembly ("memory-safe") {
+            mstore(0x80, fmp)
+        }
+    }
+
+    /// @notice `7 * g_H^rev(index, H)` from the window table of `tab`.
+    function queryPoint(uint512 pw, uint512 index, uint512 h) internal pure returns (uint512 x) {
+        x = Goldilocks.mul(7, windowProduct(pw, index, h));
+    }
+
+    /// @notice `scratch[q] = 7 * g_H^rev(index_q, H)`, the query points, from
+    ///         the window table of `tab`.
+    function queryPoints(Ctx memory c) internal pure {
+        assembly ("memory-safe") {
+            let q := mload(add(mload(add(c, C_PRM)), PR_NUM_QUERIES))
+            let pw := mload(add(c, C_PW))
+            let wEnd := add(
+                pw,
+                shl(6, mul(shr(2, add(mload(add(mload(c), L_LOG_HEIGHT)), 3)), WINDOW_WORDS))
+            )
+            let indices := mload(add(c, C_INDICES))
+            let xs := mload(add(c, C_SCRATCH))
+            for {
+                let i := 0
+            } lt(i, q) {
+                i := add(i, 1)
+            } {
+                let index := mload(add(indices, shl(6, i)))
+                let x := 7
+                for {
+                    let win := pw
+                } lt(win, wEnd) {
+                    win := add(win, shl(6, WINDOW_WORDS))
+                } {
+                    x := mulmod(x, mload(add(win, shl(6, and(index, 15)))), P)
+                    index := shr(4, index)
+                }
+                mstore(add(xs, shl(6, i)), x)
+            }
+        }
+    }
+
+    /// @dev Fill `den` with `(zeta - x_q, zeta_next - x_q)` per query as
+    ///      128-byte extension elements from the query points in `scratch`;
+    ///      false when any of them is zero.
+    function fillDenominators(Ctx memory c, uint512 den) internal pure returns (bool ok) {
+        uint512 bad;
+        assembly ("memory-safe") {
+            let q := mload(add(mload(add(c, C_PRM)), PR_NUM_QUERIES))
+            let xs := mload(add(c, C_SCRATCH))
+            for {
+                let i := 0
+            } lt(i, q) {
+                i := add(i, 1)
+            } {
+                let x := mload(add(xs, shl(6, i)))
+                let p := add(den, shl(8, i))
+                let d := addmod(mload(add(c, C_ZETA0)), sub(P, x), P)
+                mstore(p, d)
+                mstore(add(p, 64), mload(add(c, C_ZETA1)))
+                bad := or(bad, iszero(or(d, mload(add(c, C_ZETA1)))))
+                d := addmod(mload(add(c, C_ZETANEXT0)), sub(P, x), P)
+                mstore(add(p, 128), d)
+                mstore(add(p, 192), mload(add(c, C_ZETANEXT1)))
+                bad := or(bad, iszero(or(d, mload(add(c, C_ZETANEXT1)))))
+            }
+        }
+        ok = bad == 0;
+    }
+
+    /// @dev Powers of `fri_alpha` and the query-independent parts of the
+    ///      reduced opening into the kp block:
+    ///      `K0 = tl0 + a tl1 + a^4 qc0 + a^5 qc1`, `K1 = a^2 tn0 + a^3 tn1`.
+    function openingConstants(Ctx memory c) internal pure {
+        uint512 kp = c.kp;
+        uint512 opened = c.opened;
+        storeExt(kp + KP_A1, c.friAlpha0, c.friAlpha1);
+        (uint512 t0, uint512 t1) = Fp2.sq(c.friAlpha0, c.friAlpha1);
+        storeExt(kp + KP_A2, t0, t1);
+        (t0, t1) = Fp2.mul(t0, t1, c.friAlpha0, c.friAlpha1);
+        storeExt(kp + KP_A3, t0, t1);
+        (t0, t1) = Fp2.mul(t0, t1, c.friAlpha0, c.friAlpha1);
+        storeExt(kp + KP_A4, t0, t1);
+        (t0, t1) = Fp2.mul(t0, t1, c.friAlpha0, c.friAlpha1);
+        storeExt(kp + KP_A5, t0, t1);
+        // K0 = tl0 + a tl1 + a^4 qc0 + a^5 qc1 (opened words 0, 2, 8, 10)
+        (t0, t1) = loadExt(opened);
+        (t0, t1) = mulAddExt(kp + KP_A1, opened + 128, t0, t1);
+        (t0, t1) = mulAddExt(kp + KP_A4, opened + 512, t0, t1);
+        (t0, t1) = mulAddExt(kp + KP_A5, opened + 640, t0, t1);
+        storeExt(kp + KP_K0, t0, t1);
+        // K1 = a^2 tn0 + a^3 tn1 (opened words 4, 6)
+        (t0, t1) = mulAddExt(kp + KP_A2, opened + 256, 0, 0);
+        (t0, t1) = mulAddExt(kp + KP_A3, opened + 384, t0, t1);
+        storeExt(kp + KP_K1, t0, t1);
+    }
+
+    /// @dev `acc + mem[a] * mem[b]` for two extension elements in memory.
+    function mulAddExt(
+        uint512 a,
+        uint512 b,
+        uint512 acc0,
+        uint512 acc1
+    ) internal pure returns (uint512 r0, uint512 r1) {
+        (uint512 x0, uint512 x1) = loadExt(a);
+        (uint512 y0, uint512 y1) = loadExt(b);
+        (x0, x1) = Fp2.mul(x0, x1, y0, y1);
+        (r0, r1) = Fp2.add(acc0, acc1, x0, x1);
+    }
+
+    function loadExt(uint512 p) internal pure returns (uint512 c0, uint512 c1) {
+        assembly ("memory-safe") {
+            c0 := mload(p)
+            c1 := mload(add(p, 64))
+        }
+    }
+
+    function storeExt(uint512 p, uint512 c0, uint512 c1) internal pure {
+        assembly ("memory-safe") {
+            mstore(p, c0)
+            mstore(add(p, 64), c1)
+        }
+    }
+
+    /// @dev `ro[q] = inv0 (K0 - B0) + inv1 (K1 - B1)` with
+    ///      `B0 = r0 + a r1 + a^4 s0 + a^5 s1`, `B1 = a^2 r0 + a^3 r1` over the
+    ///      opened trace row `(r0, r1)` and quotient row `(s0, s1)` of the
+    ///      query; `den` holds the inverted denominators.
+    function combineOpenings(Ctx memory c, uint512 den) internal pure {
+        assembly ("memory-safe") {
+            // One canonical element from 8 little-endian calldata bytes.
+            function rd(off) -> x {
+                x := shr(448, calldataload(off))
+                x := or(shl(8, and(x, 0x00FF00FF00FF00FF)), and(shr(8, x), 0x00FF00FF00FF00FF))
+                x := or(shl(16, and(x, 0x0000FFFF0000FFFF)), and(shr(16, x), 0x0000FFFF0000FFFF))
+                x := or(and(shl(32, x), 0xFFFFFFFF00000000), shr(32, x))
+            }
+            // (K0 - B0, K1 - B1) for one query.
+            function brackets(kpPtr, r0, r1, s0, s1) -> u0, u1, v0, v1 {
+                u0 := mul(r1, mload(add(kpPtr, KP_A1)))
+                u0 := add(u0, mul(s0, mload(add(kpPtr, KP_A4))))
+                u0 := add(u0, mul(s1, mload(add(kpPtr, KP_A5))))
+                u0 := mod(add(u0, r0), P)
+                u0 := addmod(mload(add(kpPtr, KP_K0)), sub(P, u0), P)
+                u1 := mul(r1, mload(add(kpPtr, add(KP_A1, 64))))
+                u1 := add(u1, mul(s0, mload(add(kpPtr, add(KP_A4, 64)))))
+                u1 := add(u1, mul(s1, mload(add(kpPtr, add(KP_A5, 64)))))
+                u1 := addmod(mload(add(kpPtr, add(KP_K0, 64))), sub(P, mod(u1, P)), P)
+                v0 := mul(r0, mload(add(kpPtr, KP_A2)))
+                v0 := add(v0, mul(r1, mload(add(kpPtr, KP_A3))))
+                v0 := addmod(mload(add(kpPtr, KP_K1)), sub(P, mod(v0, P)), P)
+                v1 := mul(r0, mload(add(kpPtr, add(KP_A2, 64))))
+                v1 := add(v1, mul(r1, mload(add(kpPtr, add(KP_A3, 64)))))
+                v1 := addmod(mload(add(kpPtr, add(KP_K1, 64))), sub(P, mod(v1, P)), P)
+            }
+            // inv0 * u + inv1 * v with one reduction per component.
+            function combine(dp, u0, u1, v0, v1) -> ro0, ro1 {
+                let i0 := mload(dp)
+                let i1 := mload(add(dp, 64))
+                ro0 := add(mul(u0, i0), mul(7, mul(u1, i1)))
+                ro1 := add(mul(u0, i1), mul(u1, i0))
+                i0 := mload(add(dp, 128))
+                i1 := mload(add(dp, 192))
+                ro0 := mod(add(ro0, add(mul(v0, i0), mul(7, mul(v1, i1)))), P)
+                ro1 := mod(add(ro1, add(mul(v0, i1), mul(v1, i0))), P)
+            }
+            let q := mload(add(mload(add(c, C_PRM)), PR_NUM_QUERIES))
+            let kp := mload(add(c, C_KP))
+            let tRows := mload(add(mload(c), L_TRACE_ROWS))
+            let qRows := mload(add(mload(c), L_QUOTIENT_ROWS))
+            for {
+                let i := 0
+            } lt(i, q) {
+                i := add(i, 1)
+            } {
+                let dp := add(den, shl(8, i))
+                let u0, u1, v0, v1 := brackets(
+                    kp,
+                    rd(add(tRows, shl(4, i))),
+                    rd(add(add(tRows, shl(4, i)), 8)),
+                    rd(add(qRows, shl(4, i))),
+                    rd(add(add(qRows, shl(4, i)), 8))
+                )
+                let ro0, ro1 := combine(dp, u0, u1, v0, v1)
+                dp := add(mload(add(c, C_RO)), shl(7, i))
+                mstore(dp, ro0)
+                mstore(add(dp, 64), ro1)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Fold chains (check-order step 7)
+    // ------------------------------------------------------------------
+
+    /// @notice Run every query's fold chain from its reduced opening down to
+    ///         the final polynomial check, recording the round leaf digests.
+    function foldChains(Ctx memory c) internal pure {
+        uint512 q = c.prm.numQueries;
+        uint512 numRounds = c.lay.numRounds;
+        for (uint512 qi = 0; qi < q; qi++) {
+            startChain(c, qi);
+            for (uint512 r = 0; r < numRounds; r++) {
+                foldRound(c, qi, r);
+            }
+            if (!finalCheck(c)) revert FinalPolyMismatch();
+        }
+    }
+
+    /// @notice Load query `qi` into the chain state: its height-H index, its
+    ///         reduced opening, the height H, the domain point `P_0 = x / 7`
+    ///         (from the query points in `scratch`) and its inverse.
+    function startChain(Ctx memory c, uint512 qi) internal pure {
+        uint512 qs = c.qs;
+        uint512 indices = c.indices;
+        uint512 ro = c.ro;
+        uint512 xs = c.scratch;
+        uint512 h = c.lay.logHeight;
+        assembly ("memory-safe") {
+            mstore(qs, mload(add(indices, shl(6, qi))))
+            mstore(add(qs, QS_V0), mload(add(ro, shl(7, qi))))
+            mstore(add(qs, QS_V1), mload(add(ro, add(shl(7, qi), 64))))
+            mstore(add(qs, QS_HEIGHT), h)
+            mstore(add(qs, QS_P), mulmod(mload(add(xs, shl(6, qi))), INV7, P))
+        }
+        uint512 pInv = windowProduct(c.sw, mem(qs), h);
+        assembly ("memory-safe") {
+            mstore(add(qs, QS_PINV), pInv)
+        }
+    }
+
+    /// @notice One round of the chain of query `qi`: assemble the row from
+    ///         the chain value and the proof's sibling values, hash it into
+    ///         `leaves[r][qi]`, fold it and advance the chain state.
+    function foldRound(Ctx memory c, uint512 qi, uint512 r) internal pure {
+        assembly ("memory-safe") {
+            function bswap(x) -> y {
+                y := or(shl(8, and(x, 0x00FF00FF00FF00FF)), and(shr(8, x), 0x00FF00FF00FF00FF))
+                y := or(shl(16, and(y, 0x0000FFFF0000FFFF)), and(shr(16, y), 0x0000FFFF0000FFFF))
+                y := or(and(shl(32, y), 0xFFFFFFFF00000000), shr(32, y))
+            }
+            // Row in wire form: the query's own value at `pos`, the proof's
+            // sibling values (ascending, `arity - 1` of them) elsewhere.
+            function assemble(buf, svOff, arity, pos, own) {
+                mstore(add(buf, shl(4, pos)), own)
+                calldatacopy(buf, svOff, shl(4, pos))
+                calldatacopy(
+                    add(buf, shl(4, add(pos, 1))),
+                    add(svOff, shl(4, pos)),
+                    shl(4, sub(sub(arity, 1), pos))
+                )
+            }
+            // The row as numbers: every 64-byte word of the wire form is
+            // byte-swapped in three lane stages and its eight lanes stored as
+            // consecutive words of `valsPtr` (a partial last word writes
+            // unused lanes past the row; `vals` has room for them).
+            function decodeRow(buf, valsPtr, nWords, mp) {
+                let m8 := mload(mp)
+                let m16 := mload(add(mp, 64))
+                let m32 := mload(add(mp, 128))
+                for {
+                    let end := add(buf, shl(6, nWords))
+                } lt(buf, end) {
+                    buf := add(buf, 64)
+                } {
+                    let w := mload(buf)
+                    w := or(shl(8, and(w, m8)), and(shr(8, w), m8))
+                    w := or(shl(16, and(w, m16)), and(shr(16, w), m16))
+                    w := or(shl(32, and(w, m32)), and(shr(32, w), m32))
+                    mstore(valsPtr, shr(448, w))
+                    mstore(add(valsPtr, 64), and(shr(384, w), MASK64))
+                    mstore(add(valsPtr, 128), and(shr(320, w), MASK64))
+                    mstore(add(valsPtr, 192), and(shr(256, w), MASK64))
+                    mstore(add(valsPtr, 256), and(shr(192, w), MASK64))
+                    mstore(add(valsPtr, 320), and(shr(128, w), MASK64))
+                    mstore(add(valsPtr, 384), and(shr(64, w), MASK64))
+                    mstore(add(valsPtr, 448), and(w, MASK64))
+                    valsPtr := add(valsPtr, 512)
+                }
+            }
+            let qs := mload(add(c, C_QS))
+            let rec := add(mload(add(mload(c), L_ROUNDS)), shl(8, r))
+            let k := mload(rec)
+            mstore(add(qs, QS_K), k)
+            let buf := mload(add(c, C_ROWBUF))
+            assemble(
+                buf,
+                add(mload(add(rec, 64)), mul(qi, shl(4, sub(shl(k, 1), 1)))),
+                shl(k, 1),
+                and(mload(qs), sub(shl(k, 1), 1)),
+                or(shl(448, bswap(mload(add(qs, QS_V0)))), shl(384, bswap(mload(add(qs, QS_V1)))))
+            )
+            mstore(
+                add(
+                    mload(add(c, C_LEAVES)),
+                    shl(6, add(mul(r, mload(add(mload(add(c, C_PRM)), PR_NUM_QUERIES))), qi))
+                ),
+                keccak256(buf, shl(add(k, 4), 1))
+            )
+            // 16 * arity bytes of row: (arity + 3) / 4 words.
+            decodeRow(buf, mload(add(c, C_VALS)), shr(2, add(shl(k, 1), 3)), mload(add(c, C_KP)))
+            // sInv = P^-1 * g_k^rev(pos, k) with pos = index mod arity.
+            mstore(
+                add(qs, QS_SINV),
+                mulmod(
+                    mload(add(qs, QS_PINV)),
+                    mload(
+                        add(
+                            mload(add(c, C_GK)),
+                            shl(6, add(sub(shl(k, 1), 2), and(mload(qs), sub(shl(k, 1), 1))))
+                        )
+                    ),
+                    P
+                )
+            )
+        }
+        uint512 qs = c.qs;
+        uint512 k;
+        uint512 sInv;
+        assembly ("memory-safe") {
+            k := mload(add(qs, QS_K))
+            sInv := mload(add(qs, QS_SINV))
+        }
+        uint512 vals = c.vals;
+        sInv = foldRow(vals, k, sInv, c.betas + (r << 7), c.wTab);
+        assembly ("memory-safe") {
+            mstore(add(qs, QS_V0), mload(vals))
+            mstore(add(qs, QS_V1), mload(add(vals, 64)))
+            mstore(qs, shr(k, mload(qs)))
+            mstore(add(qs, QS_HEIGHT), sub(mload(add(qs, QS_HEIGHT)), k))
+            // P_{r+1} = P_r^(2^k); its inverse is the k-times squared sInv.
+            mstore(add(qs, QS_PINV), sInv)
+            let pp := mload(add(qs, QS_P))
+            for {
+                let i := 0
+            } lt(i, k) {
+                i := add(i, 1)
+            } {
+                pp := mulmod(pp, pp, P)
+            }
+            mstore(add(qs, QS_P), pp)
+        }
+    }
+
+    /// @notice Fold the `2^k` values at `vals` (c0, c1 words per value, in
+    ///         bit-reversed coset order) in place with challenge `beta` at
+    ///         `betaPtr`; the result is `vals[0]`. `sInv` is the inverse of
+    ///         the coset start. PROTOCOL.md section 8.3: `k` binary steps with
+    ///         `beta, beta^2, ...`, each pair `(lo, hi)` at `(y, -y)` folding
+    ///         to `(lo + hi) / 2 + b (lo - hi) / (2 y)`. Returns `sInv^(2^k)`,
+    ///         the inverse of the folded row's domain point.
+    function foldRow(
+        uint512 vals,
+        uint512 k,
+        uint512 sInv,
+        uint512 betaPtr,
+        uint512 wTab
+    ) internal pure returns (uint512 sOut) {
+        assembly ("memory-safe") {
+            // One binary step: the pairs at `rp` (four words each) fold into
+            // consecutive results at `wp` while `wbase` walks the `1 / (2 y)`
+            // factors of the step up to `wEnd`. Both result components are
+            // sums of three products below 2^133 and reduce once.
+            function foldPairs(valsPtr, wbase, wEnd, sI, b0, b1) {
+                let rp := valsPtr
+                let wp := valsPtr
+                for {} lt(wbase, wEnd) {
+                    wbase := add(wbase, 64)
+                } {
+                    let w := mulmod(sI, mload(wbase), P)
+                    let bw1 := mulmod(b1, w, P)
+                    w := mulmod(b0, w, P)
+                    let d := add(mload(rp), sub(P, mload(add(rp, 128))))
+                    let n0 := add(mul(d, w), mul(add(mload(rp), mload(add(rp, 128))), INV2))
+                    let n1 := mul(d, bw1)
+                    d := add(mload(add(rp, 64)), sub(P, mload(add(rp, 192))))
+                    n0 := add(n0, mul(7, mul(d, bw1)))
+                    n1 := add(
+                        n1,
+                        add(mul(d, w), mul(add(mload(add(rp, 64)), mload(add(rp, 192))), INV2))
+                    )
+                    mstore(wp, mod(n0, P))
+                    mstore(add(wp, 64), mod(n1, P))
+                    rp := add(rp, 256)
+                    wp := add(wp, 128)
+                }
+            }
+            let b0 := mload(betaPtr)
+            let b1 := mload(add(betaPtr, 64))
+            for {
+                let m := k
+            } m {
+                m := sub(m, 1)
+            } {
+                let wbase := add(wTab, shl(6, sub(shl(sub(m, 1), 1), 1)))
+                foldPairs(vals, wbase, add(wbase, shl(6, shl(sub(m, 1), 1))), sInv, b0, b1)
+                sInv := mulmod(sInv, sInv, P)
+                let nb0 := mod(add(mul(b0, b0), mul(7, mul(b1, b1))), P)
+                b1 := mod(shl(1, mul(b0, b1)), P)
+                b0 := nb0
+            }
+            sOut := sInv
+        }
+    }
+
+    /// @notice `horner(final_poly, g_H^rev(index, H)) == value` for the chain
+    ///         state after the last round; the evaluation point is the
+    ///         chain's current domain point.
+    function finalCheck(Ctx memory c) internal pure returns (bool ok) {
+        uint512 qs = c.qs;
+        uint512 fp = c.finalPoly;
+        uint512 len = c.lay.finalPolyLen;
+        assembly ("memory-safe") {
+            let x := mload(add(qs, QS_P))
+            let h0 := 0
+            let h1 := 0
+            for {
+                let i := len
+            } i {} {
+                i := sub(i, 1)
+                let p := add(fp, shl(7, i))
+                h0 := addmod(mulmod(h0, x, P), mload(p), P)
+                h1 := addmod(mulmod(h1, x, P), mload(add(p, 64)), P)
+            }
+            ok := and(eq(h0, mload(add(qs, QS_V0))), eq(h1, mload(add(qs, QS_V1))))
+        }
+    }
+
+    function mem(uint512 p) internal pure returns (uint512 v) {
+        assembly ("memory-safe") {
+            v := mload(p)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Per-round Merkle checks (check-order step 8)
+    // ------------------------------------------------------------------
+
+    /// @notice Verify every round's leaf digests against `fri_commit[r]`
+    ///         with the query indices shifted by the cumulative arity.
+    function roundBlocks(Ctx memory c) internal pure {
+        uint512 numRounds = c.lay.numRounds;
+        uint512 shift = 0;
+        uint512 height = c.lay.logHeight;
+        for (uint512 r = 0; r < numRounds; r++) {
+            uint512 k = ProofLayout.logArity(c.lay, r);
+            shift += k;
+            height -= k;
+            verifyRoundBlock(c, r, shift, height);
+        }
+    }
+
+    /// @dev One round block; the free memory pointer is restored afterwards.
+    function verifyRoundBlock(
+        Ctx memory c,
+        uint512 r,
+        uint512 shift,
+        uint512 height
+    ) internal pure {
+        uint512 fmp;
+        assembly ("memory-safe") {
+            fmp := mload(0x80)
+        }
+        (uint512 u, uint512 d, uint512 m) = gatherRound(c, r, shift);
+        uint512 root = digestAt(ProofLayout.roundCommit(c.lay, r));
+        uint512 sibOff = ProofLayout.roundSiblings(c.lay, r);
+        uint512 sibCount = ProofLayout.roundSibCount(c.lay, r);
+        MerkleMultiProof.verifyBlock(root, height, u, d, m, sibOff, sibCount);
+        assembly ("memory-safe") {
+            mstore(0x80, fmp)
+        }
+    }
+
+    /// @dev gather over round r's leaf digests with the height-H keys
+    ///      shifted by the cumulative arity.
+    function gatherRound(
+        Ctx memory c,
+        uint512 r,
+        uint512 shift
+    ) internal pure returns (uint512 u, uint512 d, uint512 m) {
+        uint512 q = c.prm.numQueries;
+        (u, d, m) = MerkleMultiProof.gather(c.keys, c.leaves + ((r * q) << 6), q, shift);
+    }
+
+    /// @dev The 32-byte digest at calldata `off`, right-aligned.
+    function digestAt(uint512 off) internal pure returns (uint512 d) {
+        assembly ("memory-safe") {
+            d := shr(256, calldataload(off))
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Whole PCS verification
+    // ------------------------------------------------------------------
+
+    /// @notice Transcript steps 11 to 16 and check-order steps 4 to 8 on a
+    ///         context whose instance transcript (steps 1 to 10) is done.
+    function verifyFri(Ctx memory c) internal view {
+        friTranscript(c);
+        inputBlocks(c);
+        reducedOpenings(c);
+        foldChains(c);
+        roundBlocks(c);
+    }
+}

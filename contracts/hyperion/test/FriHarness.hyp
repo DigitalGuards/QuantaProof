@@ -1,0 +1,395 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma hyperion >=0.0;
+
+import "../StarkVerifier.hyp";
+
+/// @title FriHarness
+/// @notice External wrappers around ProofLayout, FriVerifier and the
+///         StarkVerifierCore flow so the contract suite can compare every
+///         FRI intermediate of every vector with the JS reference, drive the
+///         FRI-related mutation vectors through the production check order
+///         and time each phase in isolation.
+/// @dev Test-only. Presets arrive at run time as the first six words of the
+///      `args` array (`logBlowup, logFinalPolyLen, maxLogArity, numQueries,
+///      commitPowBits, queryPowBits`), which keeps every wrapper at two
+///      calldata parameters (the legacy code generator runs out of reachable
+///      stack slots with more). Results come back as flat `uint512[]` arrays;
+///      digests are returned as right-aligned integers.
+contract FriHarness is StarkVerifierCore {
+    uint512 internal constant ARGS_PARAMS = 6;
+
+    function paramsOf(
+        uint512[] calldata args
+    ) internal pure returns (ProofLayout.Params memory p) {
+        p.logBlowup = args[0];
+        p.logFinalPolyLen = args[1];
+        p.maxLogArity = args[2];
+        p.numQueries = args[3];
+        p.commitPowBits = args[4];
+        p.queryPowBits = args[5];
+    }
+
+    function proofBounds(bytes calldata proof) internal pure returns (uint512 base, uint512 length) {
+        assembly ("memory-safe") {
+            base := proof.offset
+            length := proof.length
+        }
+    }
+
+    function put(uint512[] memory out, uint512 i, uint512 v) internal pure {
+        assembly ("memory-safe") {
+            mstore(add(out, add(64, shl(6, i))), v)
+        }
+    }
+
+    function mem(uint512 p) internal pure returns (uint512 v) {
+        assembly ("memory-safe") {
+            v := mload(p)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Layout
+    // ------------------------------------------------------------------
+
+    /// @notice Decoded layout as proof-relative offsets:
+    ///         `[n, H, R, pEnd, traceRows, traceSibCount, traceSiblings,
+    ///         quotientRows, quotientSibCount, quotientSiblings,
+    ///         (logArity, siblingValues, sibCount, siblings) per round]`.
+    ///         Reverts BadVersion, BadHeader or BadLength like the verifier.
+    function layout(
+        bytes calldata proof,
+        uint512[] calldata args
+    ) external pure returns (uint512[] memory out) {
+        (uint512 base, uint512 length) = proofBounds(proof);
+        ProofLayout.Layout memory lay = ProofLayout.parse(base, length, paramsOf(args));
+        out = new uint512[](uint256(10 + 4 * lay.numRounds));
+        put(out, 0, lay.degreeBits);
+        put(out, 1, lay.logHeight);
+        put(out, 2, lay.numRounds);
+        put(out, 3, lay.pEnd);
+        put(out, 4, lay.traceRows - base);
+        put(out, 5, lay.traceSibCount);
+        put(out, 6, lay.traceSiblings - base);
+        put(out, 7, lay.quotientRows - base);
+        put(out, 8, lay.quotientSibCount);
+        put(out, 9, lay.quotientSiblings - base);
+        for (uint512 r = 0; r < lay.numRounds; r++) {
+            put(out, 10 + 4 * r, ProofLayout.logArity(lay, r));
+            put(out, 11 + 4 * r, ProofLayout.siblingValues(lay, r) - base);
+            put(out, 12 + 4 * r, ProofLayout.roundSibCount(lay, r));
+            put(out, 13 + 4 * r, ProofLayout.roundSiblings(lay, r) - base);
+        }
+    }
+
+    /// @notice `keccak256(proof[0..pEnd])`.
+    function proofId(bytes calldata proof, uint512[] calldata args) external pure returns (bytes32) {
+        (uint512 base, uint512 length) = proofBounds(proof);
+        return ProofLayout.proofId(ProofLayout.parse(base, length, paramsOf(args)));
+    }
+
+    /// @notice The canonical scan alone; reverts NonCanonicalElement.
+    function checkCanonical(
+        bytes calldata proof,
+        uint512[] calldata args
+    ) external pure returns (bool) {
+        (uint512 base, uint512 length) = proofBounds(proof);
+        ProofLayout.Params memory p = paramsOf(args);
+        ProofLayout.checkCanonical(ProofLayout.parse(base, length, p), p.numQueries);
+        return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Reduced openings
+    // ------------------------------------------------------------------
+
+    /// @dev Context over `proof` with the challenges of `args` (zeta,
+    ///      zeta_next, fri_alpha at words 6..11) and the indices at 12..12+Q.
+    function contextWithChallenges(
+        bytes calldata proof,
+        uint512[] calldata args
+    ) internal pure returns (FriVerifier.Ctx memory c) {
+        (uint512 base, uint512 length) = proofBounds(proof);
+        ProofLayout.Params memory p = paramsOf(args);
+        ProofLayout.Layout memory lay = ProofLayout.parse(base, length, p);
+        FriVerifier.init(c, lay, p);
+        FriVerifier.decodePrefix(c);
+        c.zeta0 = args[6];
+        c.zeta1 = args[7];
+        c.zetaNext0 = args[8];
+        c.zetaNext1 = args[9];
+        c.friAlpha0 = args[10];
+        c.friAlpha1 = args[11];
+        uint512 indices = c.indices;
+        for (uint512 i = 0; i < p.numQueries; i++) {
+            uint512 v = args[uint256(12 + i)];
+            assembly ("memory-safe") {
+                mstore(add(indices, shl(6, i)), v)
+            }
+        }
+    }
+
+    /// @notice Every query's reduced opening with its intermediates, eleven
+    ///         words per query: `x, denomZeta (2), denomZetaNext (2),
+    ///         invDenomZeta (2), invDenomZetaNext (2), reducedOpening (2)`.
+    ///         `args`: the six parameters, zeta, zeta_next, fri_alpha (c0, c1
+    ///         each) and the Q query indices. Reverts ZeroDenominator.
+    function openInputs(
+        bytes calldata proof,
+        uint512[] calldata args
+    ) external view returns (uint512[] memory out) {
+        FriVerifier.Ctx memory c = contextWithChallenges(proof, args);
+        uint512 q = c.prm.numQueries;
+        out = new uint512[](uint256(11 * q));
+        uint512 den;
+        assembly ("memory-safe") {
+            den := mload(0x80)
+            mstore(0x80, add(den, shl(8, q)))
+        }
+        FriVerifier.queryPoints(c);
+        if (!FriVerifier.fillDenominators(c, den)) revert FriVerifier.ZeroDenominator();
+        for (uint512 i = 0; i < q; i++) {
+            put(out, 11 * i, mem(c.scratch + (i << 6)));
+            for (uint512 j = 0; j < 4; j++) {
+                put(out, 11 * i + 1 + j, mem(den + (i << 8) + (j << 6)));
+            }
+        }
+        Fp2.batchInverse(den, 2 * q);
+        FriVerifier.openingConstants(c);
+        FriVerifier.combineOpenings(c, den);
+        for (uint512 i = 0; i < q; i++) {
+            for (uint512 j = 0; j < 4; j++) {
+                put(out, 11 * i + 5 + j, mem(den + (i << 8) + (j << 6)));
+            }
+            put(out, 11 * i + 9, mem(c.ro + (i << 7)));
+            put(out, 11 * i + 10, mem(c.ro + (i << 7) + 64));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Folding
+    // ------------------------------------------------------------------
+
+    /// @notice `fold_row` on one row: `args = [foldedIndex, foldedLogHeight,
+    ///         logArity, beta0, beta1, row (c0, c1 per value, 2^logArity
+    ///         values)]`; returns the folded value.
+    function foldRow(uint512[] calldata args) external pure returns (uint512 c0, uint512 c1) {
+        uint512 h = args[1];
+        uint512 k = args[2];
+        uint512 tab;
+        uint512 tabInv;
+        uint512 wTab;
+        uint512 vals;
+        uint512 betaPtr;
+        assembly ("memory-safe") {
+            tab := mload(0x80)
+            tabInv := add(tab, shl(6, 32))
+            wTab := add(tabInv, shl(6, 32))
+            betaPtr := add(wTab, shl(6, 32))
+            vals := add(betaPtr, 128)
+            mstore(0x80, add(vals, shl(7, shl(k, 1))))
+            mstore(betaPtr, calldataload(add(args.offset, 192)))
+            mstore(add(betaPtr, 64), calldataload(add(args.offset, 256)))
+            calldatacopy(vals, add(args.offset, 320), shl(7, shl(k, 1)))
+        }
+        FriVerifier.buildTables(tab, tabInv, 32);
+        FriVerifier.buildWTable(wTab, k);
+        // s = g_{h+k}^rev(foldedIndex, h): bit i of the folded index selects g_{k+i+1}.
+        uint512 sInv = 1;
+        uint512 idx = args[0];
+        for (uint512 i = 0; i < h; i++) {
+            if ((idx >> i) & 1 == 1) sInv = Goldilocks.mul(sInv, mem(tabInv + ((k + i) << 6)));
+        }
+        FriVerifier.foldRow(vals, k, sInv, betaPtr, wTab);
+        c0 = mem(vals);
+        c1 = mem(vals + 64);
+    }
+
+    /// @notice Every query's fold chain. `args`: the six parameters, the R
+    ///         betas (c0, c1 each), the Q indices, the Q reduced openings
+    ///         (c0, c1 each). Per query the output holds, per round,
+    ///         `[foldedIndex, folded c0, folded c1, leaf, gas]` and then
+    ///         `[finalIndex, final value c0, final value c1, ok, gas]`; the
+    ///         gas figures are gasleft() deltas around foldRound and
+    ///         finalCheck. Never reverts on a final polynomial mismatch (the
+    ///         `ok` word reports it) so a mutated chain can be inspected.
+    function foldChains(
+        bytes calldata proof,
+        uint512[] calldata args
+    ) external view returns (uint512[] memory out) {
+        FriVerifier.Ctx memory c;
+        {
+            (uint512 base, uint512 length) = proofBounds(proof);
+            ProofLayout.Params memory p = paramsOf(args);
+            FriVerifier.init(c, ProofLayout.parse(base, length, p), p);
+        }
+        FriVerifier.decodePrefix(c);
+        uint512 q = c.prm.numQueries;
+        uint512 numRounds = c.lay.numRounds;
+        loadChainArgs(c, args, q, numRounds);
+        FriVerifier.queryPoints(c);
+        out = new uint512[](uint256(q * (5 * numRounds + 5)));
+        for (uint512 qi = 0; qi < q; qi++) {
+            FriVerifier.startChain(c, qi);
+            uint512 o = qi * (5 * numRounds + 5);
+            for (uint512 r = 0; r < numRounds; r++) {
+                uint512 before = gasleft();
+                FriVerifier.foldRound(c, qi, r);
+                uint512 used = before - gasleft();
+                put(out, o, mem(c.qs));
+                put(out, o + 1, mem(c.qs + FriVerifier.QS_V0));
+                put(out, o + 2, mem(c.qs + FriVerifier.QS_V1));
+                put(out, o + 3, mem(c.leaves + ((r * q + qi) << 6)));
+                put(out, o + 4, used);
+                o += 5;
+            }
+            uint512 before2 = gasleft();
+            bool ok = FriVerifier.finalCheck(c);
+            uint512 used2 = before2 - gasleft();
+            put(out, o, mem(c.qs));
+            put(out, o + 1, mem(c.qs + FriVerifier.QS_V0));
+            put(out, o + 2, mem(c.qs + FriVerifier.QS_V1));
+            put(out, o + 3, ok ? 1 : 0);
+            put(out, o + 4, used2);
+        }
+    }
+
+    /// @dev Betas, indices and reduced openings from `args` into the context.
+    function loadChainArgs(
+        FriVerifier.Ctx memory c,
+        uint512[] calldata args,
+        uint512 q,
+        uint512 numRounds
+    ) internal pure {
+        uint512 betas = c.betas;
+        uint512 indices = c.indices;
+        uint512 ro = c.ro;
+        uint512 off;
+        assembly ("memory-safe") {
+            off := add(args.offset, shl(6, ARGS_PARAMS))
+            calldatacopy(betas, off, shl(7, numRounds))
+            off := add(off, shl(7, numRounds))
+            calldatacopy(indices, off, shl(6, q))
+            off := add(off, shl(6, q))
+            calldatacopy(ro, off, shl(7, q))
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Whole flow with phase timings
+    // ------------------------------------------------------------------
+
+    /// @notice The verifier flow without the constraint check, timed per
+    ///         phase: `[prepare, absorbInstance, friTranscript, inputBlocks,
+    ///         reducedOpenings, foldChains, roundBlocks]` gasleft() deltas.
+    ///         Reverts exactly like the verifier for every error the FRI
+    ///         side can raise.
+    function verifyFri(
+        bytes calldata proof,
+        bytes calldata publicValues,
+        uint512[] calldata args
+    ) external view returns (uint512[] memory gas) {
+        gas = timedFlow(proof, publicValues, paramsOf(args), false);
+    }
+
+    /// @notice The complete verifier flow (StarkVerifier.verify) timed per
+    ///         phase: `[prepare, absorbInstance, checkConstraints,
+    ///         friTranscript, inputBlocks, reducedOpenings, foldChains,
+    ///         roundBlocks]`.
+    function verifyTimed(
+        bytes calldata proof,
+        bytes calldata publicValues,
+        uint512[] calldata args
+    ) external view returns (uint512[] memory gas) {
+        gas = timedFlow(proof, publicValues, paramsOf(args), true);
+    }
+
+    function timedFlow(
+        bytes calldata proof,
+        bytes calldata publicValues,
+        ProofLayout.Params memory p,
+        bool constraints
+    ) internal view returns (uint512[] memory gas) {
+        gas = new uint512[](8);
+        uint512 base;
+        uint512 length;
+        uint512 pvOff;
+        uint512 pvLen;
+        assembly ("memory-safe") {
+            base := proof.offset
+            length := proof.length
+            pvOff := publicValues.offset
+            pvLen := publicValues.length
+        }
+        uint512 before = gasleft();
+        FriVerifier.Ctx memory c = _prepare(base, length, pvOff, pvLen, p);
+        put(gas, 0, before - gasleft());
+        before = gasleft();
+        FibonacciAir.Selectors memory s = _absorbInstance(c, pvOff);
+        put(gas, 1, before - gasleft());
+        uint512 slot = 2;
+        if (constraints) {
+            before = gasleft();
+            _checkConstraints(c, s, pvOff);
+            put(gas, 2, before - gasleft());
+            slot = 3;
+        }
+        before = gasleft();
+        FriVerifier.friTranscript(c);
+        put(gas, slot, before - gasleft());
+        before = gasleft();
+        FriVerifier.inputBlocks(c);
+        put(gas, slot + 1, before - gasleft());
+        before = gasleft();
+        FriVerifier.reducedOpenings(c);
+        put(gas, slot + 2, before - gasleft());
+        before = gasleft();
+        FriVerifier.foldChains(c);
+        put(gas, slot + 3, before - gasleft());
+        before = gasleft();
+        FriVerifier.roundBlocks(c);
+        put(gas, slot + 4, before - gasleft());
+    }
+
+    /// @notice Challenges the production transcript derives for `proof`:
+    ///         `[alpha, zeta, zetaNext, friAlpha, betas..., indices...]`
+    ///         (extension elements as c0, c1), so a suite can feed the
+    ///         per-phase wrappers with chain-derived values.
+    function challenges(
+        bytes calldata proof,
+        bytes calldata publicValues,
+        uint512[] calldata args
+    ) external view returns (uint512[] memory out) {
+        ProofLayout.Params memory p = paramsOf(args);
+        uint512 base;
+        uint512 length;
+        uint512 pvOff;
+        uint512 pvLen;
+        assembly ("memory-safe") {
+            base := proof.offset
+            length := proof.length
+            pvOff := publicValues.offset
+            pvLen := publicValues.length
+        }
+        FriVerifier.Ctx memory c = _prepare(base, length, pvOff, pvLen, p);
+        _absorbInstance(c, pvOff);
+        FriVerifier.friTranscript(c);
+        uint512 q = p.numQueries;
+        uint512 numRounds = c.lay.numRounds;
+        out = new uint512[](uint256(8 + 2 * numRounds + q));
+        put(out, 0, c.alpha0);
+        put(out, 1, c.alpha1);
+        put(out, 2, c.zeta0);
+        put(out, 3, c.zeta1);
+        put(out, 4, c.zetaNext0);
+        put(out, 5, c.zetaNext1);
+        put(out, 6, c.friAlpha0);
+        put(out, 7, c.friAlpha1);
+        for (uint512 i = 0; i < 2 * numRounds; i++) {
+            put(out, 8 + i, mem(c.betas + (i << 6)));
+        }
+        for (uint512 i = 0; i < q; i++) {
+            put(out, 8 + 2 * numRounds + i, mem(c.indices + (i << 6)));
+        }
+    }
+}
