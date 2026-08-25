@@ -1,0 +1,11 @@
+/* TEAM */
+Organisation: DigitalGuards
+Site: https://digitalguards.nl
+GitHub: https://github.com/DigitalGuards
+
+/* SITE */
+Last update: 2026-08-25
+Language: English
+Standards: HTML5, CSS3, vanilla JavaScript
+Components: none, no build step
+Source: https://github.com/DigitalGuards/QuantaStark (site/)

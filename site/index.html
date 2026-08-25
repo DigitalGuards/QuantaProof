@@ -1,0 +1,868 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QuantaStark: post-quantum STARK verifier for QRL 2.0</title>
+    <meta
+      name="description"
+      content="QuantaStark verifies Plonky3-compatible STARK proofs on the 512-bit QRL 2.0 virtual machine: post-quantum validity proofs, measured at 2.2M gas per proof."
+    />
+    <meta
+      name="keywords"
+      content="QuantaStark, STARK verifier, post-quantum, QRL 2.0, Quantum Resistant Ledger, Plonky3, Hyperion, QRVM, validity rollup, zero-knowledge proof, ML-DSA-87, Goldilocks, FRI"
+    />
+    <meta name="robots" content="index, follow" />
+    <meta name="author" content="DigitalGuards" />
+    <link rel="canonical" href="https://quantastark.com/" />
+    <meta name="theme-color" content="#09090c" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="QuantaStark" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://quantastark.com/" />
+    <meta property="og:title" content="QuantaStark: post-quantum STARK verifier for QRL 2.0" />
+    <meta
+      property="og:description"
+      content="Plonky3-compatible STARK proofs verified on the 512-bit QRL 2.0 virtual machine. Hash-based, post-quantum by construction, measured on a live node."
+    />
+    <meta property="og:image" content="https://quantastark.com/img/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="QuantaStark: post-quantum STARK verifier for QRL 2.0" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://quantastark.com/" />
+    <meta name="twitter:title" content="QuantaStark: post-quantum STARK verifier for QRL 2.0" />
+    <meta
+      name="twitter:description"
+      content="Plonky3-compatible STARK proofs verified on the 512-bit QRL 2.0 virtual machine. Hash-based, post-quantum by construction, measured on a live node."
+    />
+    <meta name="twitter:image" content="https://quantastark.com/img/og-image.png" />
+    <meta name="twitter:image:alt" content="QuantaStark: post-quantum STARK verifier for QRL 2.0" />
+
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="favicon.png" type="image/png" sizes="512x512" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="site.webmanifest" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    />
+    <link rel="stylesheet" href="assets/css/site.css?v=20260825" />
+    <script src="assets/js/site.js?v=20260825" defer></script>
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://quantastark.com/#organization",
+            "name": "DigitalGuards",
+            "url": "https://digitalguards.nl",
+            "logo": "https://quantastark.com/favicon.png",
+            "sameAs": ["https://github.com/DigitalGuards", "https://myqrlwallet.com"]
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://quantastark.com/#website",
+            "url": "https://quantastark.com/",
+            "name": "QuantaStark",
+            "description": "Post-quantum STARK verifier for QRL 2.0.",
+            "publisher": { "@id": "https://quantastark.com/#organization" },
+            "inLanguage": "en"
+          },
+          {
+            "@type": "SoftwareSourceCode",
+            "@id": "https://quantastark.com/#code",
+            "name": "QuantaStark",
+            "url": "https://quantastark.com/",
+            "description": "Hyperion-native verifier for Plonky3-compatible STARK proofs on the 64-byte QRL 2.0 virtual machine, with the Rust prover, a fact registry, a bridge skeleton and the gas measurements behind the L2 architecture decision.",
+            "codeRepository": "https://github.com/DigitalGuards/QuantaStark",
+            "programmingLanguage": ["Hyperion", "Rust", "JavaScript"],
+            "runtimePlatform": "QRL 2.0 virtual machine (QRVM)",
+            "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+            "isAccessibleForFree": true,
+            "keywords": "STARK, post-quantum, QRL 2.0, Plonky3, Hyperion, validity rollup, ML-DSA-87",
+            "author": { "@id": "https://quantastark.com/#organization" },
+            "publisher": { "@id": "https://quantastark.com/#organization" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute">
+      <symbol id="qs-mark" viewBox="0 0 64 64">
+        <circle cx="30" cy="32" r="15" fill="none" stroke="#fa761e" stroke-width="6" />
+        <path d="M37 39 L50 52" stroke="#fa761e" stroke-width="6" stroke-linecap="round" />
+        <path d="M48 8l2.5 5.5L56 16l-5.5 2.5L48 24l-2.5-5.5L40 16l5.5-2.5z" fill="#ddc9a6" />
+      </symbol>
+      <symbol id="icon-github" viewBox="0 0 24 24">
+        <path
+          fill="currentColor"
+          d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.09-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.58.24 2.75.12 3.04.74.8 1.18 1.83 1.18 3.09 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"
+        />
+      </symbol>
+      <symbol id="icon-doc" viewBox="0 0 24 24">
+        <path
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6"
+        />
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24">
+        <path
+          fill="none"
+          stroke="currentColor"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M5 12.5l4.5 4.5L19 7.5"
+        />
+      </symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24">
+        <path
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm0 4v4l3 2"
+        />
+      </symbol>
+    </svg>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="#top" aria-label="QuantaStark home">
+          <svg class="mark" aria-hidden="true" focusable="false"><use href="#qs-mark" /></svg>
+          <span class="brand-name">Quanta<span>Stark</span></span>
+        </a>
+        <nav class="site-nav" aria-label="Primary">
+          <ul>
+            <li><a href="#measurements">Measurements</a></li>
+            <li><a href="#how-it-works">How it works</a></li>
+            <li><a href="#bridge">Bridge</a></li>
+            <li><a href="#roadmap">Roadmap</a></li>
+            <li>
+              <a class="nav-cta" href="https://github.com/DigitalGuards/QuantaStark" rel="noopener"
+                >GitHub</a
+              >
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="container">
+          <span class="badge badge-accent"
+            ><span class="dot"></span>Research project, unaudited</span
+          >
+          <h1 id="hero-title">Post-quantum STARK verifier for QRL&nbsp;2.0</h1>
+          <p class="lede">
+            QRL 2.0 has no pairing precompiles, so pairing-based SNARK verifiers cannot run there.
+            Validity proofs on QRL take the shape of a STARK: hashing and field arithmetic,
+            post-quantum by construction. QuantaStark verifies Plonky3-compatible proofs on the
+            512-bit QRVM in Hyperion, measured on a live node, together with the prover, a fact
+            registry and a bridge skeleton for the L1 side of a rollup.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="btn btn-primary"
+              href="https://github.com/DigitalGuards/QuantaStark"
+              rel="noopener"
+            >
+              <svg aria-hidden="true" focusable="false"><use href="#icon-github" /></svg>
+              View on GitHub
+            </a>
+            <a
+              class="btn btn-secondary"
+              href="https://github.com/DigitalGuards/QuantaStark/blob/main/docs/L2-ARCHITECTURE.md"
+              rel="noopener"
+            >
+              <svg aria-hidden="true" focusable="false"><use href="#icon-doc" /></svg>
+              Read the L2 architecture decision
+            </a>
+          </div>
+          <ul class="stat-strip" aria-label="Headline numbers">
+            <li>
+              <span class="stat-value">2,185,178</span>
+              <span class="stat-label">gas per c3 verification at 2<sup>12</sup> rows</span>
+            </li>
+            <li>
+              <span class="stat-value">43,440</span>
+              <span class="stat-label">proof bytes for that verification</span>
+            </li>
+            <li>
+              <span class="stat-value">14,458</span>
+              <span class="stat-label">bytes of runtime code (cap 24,576)</span>
+            </li>
+            <li>
+              <span class="stat-value">618</span>
+              <span class="stat-label">unit tests, no chain required</span>
+            </li>
+            <li>
+              <span class="stat-value">44</span>
+              <span class="stat-label">measured cells across 16 presets</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section" id="measurements" aria-labelledby="measurements-title">
+        <div class="container">
+          <div class="section-head">
+            <span class="eyebrow">What was measured</span>
+            <h2 id="measurements-title">Whole verification transactions on a live QRVM</h2>
+            <p>
+              Every number is a receipt or a gas estimate from the gqrl developer node at the
+              20,000,000 block gas limit, optimizer runs 200, one verifier deployment per parameter
+              preset. Transaction gas is the whole <code>verifyAndLog</code> transaction through the
+              gas meter; the inner column is the <code>gasleft()</code> delta around the verifier
+              call. The generated report has all 44 cells under three optimizer settings.
+            </p>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <caption class="visually-hidden">
+                Headline gas cells of the c1, c2 and c3 presets
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Cell</th>
+                  <th scope="col" class="num">Proof bytes</th>
+                  <th scope="col" class="num">Transaction gas</th>
+                  <th scope="col" class="num">Inside the verifier</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">
+                    <code>fib_c3_n12</code>
+                    <span class="cell-note">34 queries, log_blowup 3, 2<sup>12</sup> rows</span>
+                  </th>
+                  <td class="num">43,440</td>
+                  <td class="num">2,185,178</td>
+                  <td class="num">1,447,427</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <code>fib_c3_n20</code>
+                    <span class="cell-note">34 queries, 2<sup>20</sup> rows</span>
+                  </th>
+                  <td class="num">105,873</td>
+                  <td class="num">4,463,257</td>
+                  <td class="num">2,710,754</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <code>fib_c2_n20</code>
+                    <span class="cell-note">50 queries, log_blowup 2, 2<sup>20</sup> rows</span>
+                  </th>
+                  <td class="num">134,801</td>
+                  <td class="num">5,920,483 *</td>
+                  <td class="num">3,696,128</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <code>fib_c1_n12</code>
+                    <span class="cell-note">100 queries, log_blowup 1, 2<sup>12</sup> rows</span>
+                  </th>
+                  <td class="num">82,672</td>
+                  <td class="num">4,937,007</td>
+                  <td class="num">3,561,810</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <code>fib_c1_n20</code>
+                    <span class="cell-note">100 queries, 2<sup>20</sup> rows</span>
+                  </th>
+                  <td class="num">226,641</td>
+                  <td class="num">10,534,049 *</td>
+                  <td class="num">6,807,827</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="table-foot">
+            * Above the 131,072-byte transaction-pool cap of the execution client: the gas comes
+            from <code>qrl_estimateGas</code> and <code>qrl_call</code> instead of a receipt.
+            Source:
+            <a
+              href="https://github.com/DigitalGuards/QuantaStark/blob/main/docs/GAS-REPORT.md"
+              rel="noopener"
+              >docs/GAS-REPORT.md</a
+            >.
+          </p>
+
+          <div class="measure-notes">
+            <div class="note-card">
+              <h3>Block cap</h3>
+              <p>
+                40 of the 44 measured cells sit at or below the 8,000,000 gas target. The largest,
+                <code>fib_c1-binary_n20</code> with a 388 KB proof, takes 17,065,391 gas, 85 percent
+                of the 20,000,000 consensus block cap.
+              </p>
+            </div>
+            <div class="note-card">
+              <h3>Transaction-pool limit</h3>
+              <p>
+                The execution client refuses transactions above 131,072 bytes, so proofs above about
+                123 KB need a raised pool cap or staged verification before they can be submitted as
+                one transaction. Calldata is 20 to 43 percent of a verification.
+              </p>
+            </div>
+            <div class="note-card">
+              <h3>Release gate</h3>
+              <p>
+                A full execution, beacon and validator composition on chain 3151909 deployed every
+                preset and verified <code>fib_c3_n20</code> end to end. The gas is deterministic
+                QRVM gas, so the cells carry over to the public network unchanged.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="how-it-works" aria-labelledby="how-title">
+        <div class="container">
+          <div class="section-head">
+            <span class="eyebrow">How it works</span>
+            <h2 id="how-title">Hash-based from the prover to the bridge</h2>
+            <p>
+              The proof system is Plonky3 uni-stark over Goldilocks with the quadratic extension and
+              two-adic FRI. Every choice below was measured against the QRVM's gas table before it
+              went into the verifier.
+            </p>
+          </div>
+
+          <div class="card-grid">
+            <article class="card">
+              <span class="step" aria-hidden="true">01</span>
+              <h3>Prover pinned to Plonky3 0.7.0-rc.1</h3>
+              <p>
+                A Rust workspace produces the proofs, the test vectors and their mutation sets. The
+                crate version is pinned in <code>prover/PLONKY3_VERSION</code> and recorded in every
+                compile manifest, so a proof and the verifier that checks it always name the same
+                upstream release.
+              </p>
+            </article>
+            <article class="card">
+              <span class="step" aria-hidden="true">02</span>
+              <h3>keccak256 Fiat-Shamir and Merkle</h3>
+              <p>
+                Every hash in the proof system goes through the <code>KECCAK256</code> opcode: 30 +
+                6 gas per 64-byte word, against 388 gas per call of the SHAKE256 precompile. A proof
+                verifies a few thousand hashes, so the cheapest hash decides the design.
+              </p>
+            </article>
+            <article class="card">
+              <span class="step" aria-hidden="true">03</span>
+              <h3>Goldilocks with modexp inversion</h3>
+              <p>
+                <code>p = 2^64 - 2^32 + 1</code> needs the fewest extension-field operations of the
+                common STARK fields. Hot loops run in Yul on native 512-bit words, and field
+                inversion goes through the <code>0x05</code> modexp precompile.
+              </p>
+            </article>
+            <article class="card">
+              <span class="step" aria-hidden="true">04</span>
+              <h3>Pruned multi-opening proofs</h3>
+              <p>
+                Query openings share one pruned Merkle multi-proof per commitment and FRI folds with
+                arity 8, the cheapest schedule in both bytes and gas. Proofs travel as packed
+                <code>bytes calldata</code>: 8-byte little-endian elements, 32-byte digests, exact
+                length enforced before any query data is read.
+              </p>
+            </article>
+            <article class="card">
+              <span class="step" aria-hidden="true">05</span>
+              <h3>Fact registry keyed by public values</h3>
+              <p>
+                <code>StarkFactRegistry</code> stores
+                <code>keccak256(verifier, programId, keccak256(publicValues))</code>. Proof bytes
+                carry unobserved witness bytes and are malleable, so a proof hash never keys
+                anything; the bridge looks up the fact.
+              </p>
+            </article>
+          </div>
+
+          <figure class="flow">
+            <svg
+              viewBox="0 0 1056 176"
+              role="img"
+              aria-labelledby="flow-title flow-desc"
+              focusable="false"
+            >
+              <title id="flow-title">Proof flow from the prover to the bridge</title>
+              <desc id="flow-desc">
+                The prover produces a proof, which travels as packed calldata to StarkVerifier.
+                StarkVerifier returns true to StarkFactRegistry, which stores a fact keyed by the
+                public values. StateBridge reads the fact to advance its state root.
+              </desc>
+              <defs>
+                <marker
+                  id="flow-arrow"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0 0L10 5L0 10z" fill="#8a8b9a" />
+                </marker>
+              </defs>
+              <g class="flow-edges">
+                <path class="flow-edge" d="M170 80H226" marker-end="url(#flow-arrow)" />
+                <path class="flow-edge" d="M390 80H446" marker-end="url(#flow-arrow)" />
+                <path class="flow-edge" d="M610 80H666" marker-end="url(#flow-arrow)" />
+                <path class="flow-edge" d="M830 80H886" marker-end="url(#flow-arrow)" />
+                <text class="flow-edge-label" x="198" y="71" text-anchor="middle">proof</text>
+                <text class="flow-edge-label" x="418" y="71" text-anchor="middle">verify()</text>
+                <text class="flow-edge-label" x="638" y="71" text-anchor="middle">true</text>
+                <text class="flow-edge-label" x="858" y="71" text-anchor="middle">fact</text>
+              </g>
+              <g>
+                <rect class="flow-node" x="10" y="40" width="156" height="80" rx="12" />
+                <text class="flow-title" x="88" y="72" text-anchor="middle">Prover</text>
+                <text class="flow-sub" x="88" y="92" text-anchor="middle">Plonky3 0.7.0-rc.1</text>
+                <text class="flow-sub" x="88" y="108" text-anchor="middle">Rust, keccak256</text>
+              </g>
+              <g>
+                <rect class="flow-node" x="230" y="40" width="156" height="80" rx="12" />
+                <text class="flow-title" x="308" y="72" text-anchor="middle">Calldata</text>
+                <text class="flow-sub" x="308" y="92" text-anchor="middle">packed bytes</text>
+                <text class="flow-sub" x="308" y="108" text-anchor="middle">43,440 B at 2^12</text>
+              </g>
+              <g>
+                <rect
+                  class="flow-node flow-node-accent"
+                  x="450"
+                  y="40"
+                  width="156"
+                  height="80"
+                  rx="12"
+                />
+                <text class="flow-title" x="528" y="72" text-anchor="middle">StarkVerifier</text>
+                <text class="flow-sub" x="528" y="92" text-anchor="middle">Hyperion, uint512</text>
+                <text class="flow-sub" x="528" y="108" text-anchor="middle">one per preset</text>
+              </g>
+              <g>
+                <rect class="flow-node" x="670" y="40" width="156" height="80" rx="12" />
+                <text class="flow-title" x="748" y="72" text-anchor="middle">
+                  StarkFactRegistry
+                </text>
+                <text class="flow-sub" x="748" y="92" text-anchor="middle">fact keyed by</text>
+                <text class="flow-sub" x="748" y="108" text-anchor="middle">public values</text>
+              </g>
+              <g>
+                <rect class="flow-node" x="890" y="40" width="156" height="80" rx="12" />
+                <text class="flow-title" x="968" y="72" text-anchor="middle">StateBridge</text>
+                <text class="flow-sub" x="968" y="92" text-anchor="middle">
+                  submitBatch, deposit
+                </text>
+                <text class="flow-sub" x="968" y="108" text-anchor="middle">
+                  withdraw, ML-DSA-87
+                </text>
+              </g>
+              <text class="flow-sub" x="528" y="154" text-anchor="middle">
+                verify(bytes proof, bytes publicValues) reverts with a custom error on any failed
+                check
+              </text>
+            </svg>
+            <figcaption class="flow-caption">
+              One <code>verify</code> call: decode and scan the layout, replay the keccak
+              transcript, check the constraints at the out-of-domain point, then FRI (input batches,
+              reduced openings, fold chains, round Merkle checks). Normative details live in
+              <a
+                href="https://github.com/DigitalGuards/QuantaStark/blob/main/docs/PROTOCOL.md"
+                rel="noopener"
+                >docs/PROTOCOL.md</a
+              >
+              and
+              <a
+                href="https://github.com/DigitalGuards/QuantaStark/blob/main/docs/VERIFIER.md"
+                rel="noopener"
+                >docs/VERIFIER.md</a
+              >.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section" id="bridge" aria-labelledby="bridge-title">
+        <div class="container">
+          <div class="section-head">
+            <span class="eyebrow">Testnet bridge (preview)</span>
+            <h2 id="bridge-title">The L1 side of a rollup, shown before it is connected</h2>
+            <p>
+              <code>StateBridge</code> is the bridge skeleton that consumes registry facts. There is
+              no public QRL 2.0 testnet to point it at yet, so this panel is a disabled preview of
+              the contract's interface. It is wired to nothing.
+            </p>
+          </div>
+
+          <div class="bridge-layout">
+            <div class="bridge-panel" data-bridge-mock>
+              <div class="bridge-panel-head">
+                <h3>
+                  <svg class="mark" width="22" height="22" aria-hidden="true" focusable="false">
+                    <use href="#qs-mark" />
+                  </svg>
+                  StateBridge <code>preset c3</code>
+                </h3>
+                <span class="badge badge-accent" id="bridge-status"
+                  ><span class="dot"></span>Awaiting the QRL 2.0 public testnet relaunch</span
+                >
+              </div>
+
+              <ul class="bridge-state" aria-label="Bridge state">
+                <li>
+                  <span class="k">State root</span>
+                  <span class="v" title="genesis root placeholder"
+                    >0x0000&hellip;0000 (genesis)</span
+                  >
+                </li>
+                <li>
+                  <span class="k">Batch index</span>
+                  <span class="v">0</span>
+                </li>
+                <li>
+                  <span class="k">Deposits</span>
+                  <span class="v">0</span>
+                </li>
+                <li>
+                  <span class="k">Network</span>
+                  <span class="v">none (preview)</span>
+                </li>
+              </ul>
+
+              <form class="bridge-form" aria-describedby="bridge-status" novalidate>
+                <h4>Deposit <span class="gas">measured 68,800 gas</span></h4>
+                <div class="field">
+                  <label for="deposit-amount">Amount (Quanta)</label>
+                  <input
+                    id="deposit-amount"
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="0.0"
+                    autocomplete="off"
+                    disabled
+                  />
+                </div>
+                <div class="bridge-actions">
+                  <button class="btn btn-primary" type="button" aria-disabled="true">
+                    Deposit
+                  </button>
+                  <span class="bridge-hint">Appends a leaf to the deposit accumulator.</span>
+                </div>
+              </form>
+
+              <form class="bridge-form" aria-describedby="bridge-status" novalidate>
+                <h4>Withdraw <span class="gas">measured 345,791 gas</span></h4>
+                <div class="field">
+                  <label for="withdraw-recipient">Recipient (QRL 2.0 address)</label>
+                  <input
+                    id="withdraw-recipient"
+                    type="text"
+                    placeholder="Q..."
+                    autocomplete="off"
+                    disabled
+                  />
+                </div>
+                <div class="field-row">
+                  <div class="field">
+                    <label for="withdraw-amount">Amount (Quanta)</label>
+                    <input
+                      id="withdraw-amount"
+                      type="text"
+                      inputmode="decimal"
+                      placeholder="0.0"
+                      autocomplete="off"
+                      disabled
+                    />
+                  </div>
+                  <div class="field">
+                    <label for="withdraw-nonce">Nonce</label>
+                    <input
+                      id="withdraw-nonce"
+                      type="text"
+                      inputmode="numeric"
+                      placeholder="0"
+                      autocomplete="off"
+                      disabled
+                    />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="withdraw-proof">Merkle proof</label>
+                  <textarea
+                    id="withdraw-proof"
+                    placeholder="one 32-byte node per line, leaf index selects the side"
+                    disabled
+                  ></textarea>
+                </div>
+                <div class="field">
+                  <label for="withdraw-signature">ML-DSA-87 signature</label>
+                  <textarea
+                    id="withdraw-signature"
+                    placeholder="4,627 bytes over the SHAKE256 digest, context QP-WITHDRAW-v1"
+                    disabled
+                  ></textarea>
+                </div>
+                <div class="bridge-actions">
+                  <button class="btn btn-primary" type="button" aria-disabled="true">
+                    Withdraw
+                  </button>
+                  <span class="bridge-hint">Verified through precompile 0x03.</span>
+                </div>
+              </form>
+            </div>
+
+            <div class="bridge-copy">
+              <div>
+                <h3>What the bridge does</h3>
+                <p>
+                  Three flows, all Hyperion, high level, no assembly. Gas is the receipt on the
+                  developer node with a four-leaf withdrawal tree.
+                </p>
+              </div>
+              <ol>
+                <li>
+                  <strong>Deposits.</strong>
+                  <p>
+                    <code>deposit()</code> hashes the sender, the amount and the deposit index into
+                    a leaf, folds it into an append-only accumulator and emits
+                    <code>Deposited</code>. An L2 batch later proves that it consumed the deposits
+                    in order.
+                  </p>
+                </li>
+                <li>
+                  <strong>Batches proven by STARK.</strong>
+                  <p>
+                    <code>submitBatch(prevRoot, newRoot, publicValues, proof)</code> requires
+                    <code>prevRoot</code> to equal the current state root and the public values to
+                    encode both roots as sixteen Goldilocks limbs. The registry verifies the proof,
+                    or finds the fact already registered, and the state root advances. 155,618 gas
+                    plus the verifier's own gas.
+                  </p>
+                </li>
+                <li>
+                  <strong>Withdrawals authenticated by ML-DSA-87.</strong>
+                  <p>
+                    <code>withdraw</code> proves a leaf under the state root and checks an ML-DSA-87
+                    signature through precompile <code>0x03</code> over a SHAKE256 digest
+                    (precompile <code>0x06</code>) of the leaf and the recipient, with the context
+                    <code>QP-WITHDRAW-v1</code>. The leaf is marked spent before the transfer.
+                    345,791 gas, 125,000 of them in the precompile.
+                  </p>
+                </li>
+              </ol>
+              <p>
+                The skeleton has no escape hatch, challenge window, forced inclusion, sequencer
+                role, pausing or upgradeability yet.
+                <a
+                  href="https://github.com/DigitalGuards/QuantaStark/blob/main/docs/BRIDGE.md"
+                  rel="noopener"
+                  >docs/BRIDGE.md</a
+                >
+                lists every simplification, and the architecture document gives the order in which
+                they get added.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="roadmap" aria-labelledby="roadmap-title">
+        <div class="container">
+          <div class="section-head">
+            <span class="eyebrow">Research status and roadmap</span>
+            <h2 id="roadmap-title">Measured, decided, unaudited</h2>
+            <p>
+              QuantaStark is a DigitalGuards research project: experimental, unaudited, and subject
+              to breaking changes. It exists to measure what post-quantum validity proofs cost on
+              QRL 2.0 and to inform an L2 design. Nothing in the repository is production software,
+              and nothing in it should secure funds.
+            </p>
+          </div>
+
+          <div class="roadmap-grid">
+            <div>
+              <ul class="status-list" aria-label="Status">
+                <li>
+                  <span class="tick tick-done" aria-hidden="true"
+                    ><svg><use href="#icon-check" /></svg
+                  ></span>
+                  <span
+                    ><strong>Verifier, prover, vectors, registry and bridge skeleton</strong>
+                    complete and measured on the developer node (milestones M0 to M8). Every valid
+                    vector of the sixteen presets verifies; every mutated vector reverts with its
+                    recorded error.</span
+                  >
+                </li>
+                <li>
+                  <span class="tick tick-done" aria-hidden="true"
+                    ><svg><use href="#icon-check" /></svg
+                  ></span>
+                  <span
+                    ><strong>Release gate run</strong> on the Kurtosis composition (chain 3151909):
+                    all presets deployed, <code>fib_c3_n20</code> verified end to end, gas report
+                    regenerated.</span
+                  >
+                </li>
+                <li>
+                  <span class="tick tick-done" aria-hidden="true"
+                    ><svg><use href="#icon-check" /></svg
+                  ></span>
+                  <span
+                    ><strong>L2 architecture decision</strong> (milestone M9) derived from the
+                    measured numbers, with a decision table and the open questions.</span
+                  >
+                </li>
+                <li>
+                  <span class="tick tick-open" aria-hidden="true"
+                    ><svg><use href="#icon-clock" /></svg
+                  ></span>
+                  <span
+                    ><strong>No external review yet.</strong> The presets carry 116 to 118
+                    conjectured bits of soundness under a conjecture that is under active revision;
+                    an audit of the verifier and the circuits is part of the plan.</span
+                  >
+                </li>
+                <li>
+                  <span class="tick tick-open" aria-hidden="true"
+                    ><svg><use href="#icon-clock" /></svg
+                  ></span>
+                  <span
+                    ><strong>Public deployment waits</strong> for the QRL 2.0 public testnet
+                    relaunch. Until then the bridge above stays a preview.</span
+                  >
+                </li>
+              </ul>
+
+              <div class="recommendation" style="margin-top: 1.25rem">
+                <h3>The L2 recommendation</h3>
+                <p>
+                  Build a validity rollup whose data availability lives in QRL calldata and whose
+                  final on-chain proof is the c3 STARK that <code>StarkVerifier</code> already
+                  checks. Aggregate batch proofs with two-layer recursion, Poseidon2 inside and
+                  keccak256 at the last layer, and let L2 accounts sign with a Poseidon2 hash-based
+                  scheme. Keep ML-DSA-87 at the L1 boundary, through the bridge.
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <h3 style="margin-bottom: 1rem">Next steps, in order</h3>
+              <ol class="milestones">
+                <li>
+                  <span class="m">M10</span>
+                  <strong>Poseidon2 AIR and layout version 2</strong>
+                  Multi-commitment layout with quotient chunks, measured on the developer node; a
+                  Kurtosis gas report for the existing cells.
+                </li>
+                <li>
+                  <span class="m">M11</span>
+                  <strong>Data binding in the bridge</strong>
+                  A keccak AIR, <code>postData</code> and the public-values schema in
+                  <code>StateBridge</code>, the withdrawal root and the forced-inclusion inbox.
+                </li>
+                <li>
+                  <span class="m">M12</span>
+                  <strong>Recursion prototype</strong>
+                  Poseidon2 inner layer, keccak256 final layer, with the Fibonacci AIR as the
+                  payload.
+                </li>
+                <li>
+                  <span class="m">M13</span>
+                  <strong>Payment AIR set</strong>
+                  Hash-based signatures and the lookup layer; wallet key derivation and index
+                  persistence.
+                </li>
+                <li>
+                  <span class="m">M14</span>
+                  <strong>Escape hatch, governance, defense in depth</strong>
+                  External review of the verifier and the circuits, then a public testnet deployment
+                  of the sequencer, the prover and the submitter.
+                </li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-main">
+          <div class="footer-brand">
+            <a class="brand" href="#top">
+              <svg class="mark" aria-hidden="true" focusable="false"><use href="#qs-mark" /></svg>
+              <span class="brand-name">Quanta<span>Stark</span></span>
+            </a>
+            <p>
+              Post-quantum STARK verifier for QRL 2.0, built by
+              <a href="https://digitalguards.nl" rel="noopener">DigitalGuards</a>. Source under
+              GPL-3.0.
+            </p>
+            <p class="disclaimer">Research project, unaudited, no funds.</p>
+          </div>
+          <nav class="footer-nav" aria-label="Project">
+            <span class="footer-nav-title">Project</span>
+            <a href="https://github.com/DigitalGuards/QuantaStark" rel="noopener"
+              >GitHub repository</a
+            >
+            <a
+              href="https://github.com/DigitalGuards/QuantaStark/blob/main/docs/L2-ARCHITECTURE.md"
+              rel="noopener"
+              >L2 architecture</a
+            >
+            <a
+              href="https://github.com/DigitalGuards/QuantaStark/blob/main/docs/BRIDGE.md"
+              rel="noopener"
+              >Bridge</a
+            >
+            <a
+              href="https://github.com/DigitalGuards/QuantaStark/blob/main/docs/GAS-REPORT.md"
+              rel="noopener"
+              >Gas report</a
+            >
+            <a
+              href="https://github.com/DigitalGuards/QuantaStark/blob/main/docs/PROTOCOL.md"
+              rel="noopener"
+              >Protocol</a
+            >
+          </nav>
+          <nav class="footer-nav" aria-label="Ecosystem">
+            <span class="footer-nav-title">Ecosystem</span>
+            <a href="https://quantapool.com" rel="noopener">QuantaPool</a>
+            <a href="https://quantaswap.io" rel="noopener">QuantaSwap</a>
+            <a href="https://zondscan.com" rel="noopener">zondscan</a>
+            <a href="https://qrlwallet.com" rel="noopener">MyQRLWallet</a>
+          </nav>
+        </div>
+        <div class="footer-bottom">
+          <span>&copy; 2026 DigitalGuards. A Dutch privately owned company.</span>
+          <span>Research project, unaudited, no funds.</span>
+        </div>
+      </div>
+    </footer>
+
+    <div class="net-tip" id="net-tip" role="status" aria-live="polite"></div>
+  </body>
+</html>
