@@ -21,8 +21,9 @@ How to read the numbers:
 Security scope: the current implementation is a validity proof for scaling and
 is not zero knowledge. All current FRI presets are experimental benchmark
 profiles. Poseidon2 is an unselected benchmark candidate after the August 2026
-Poseidon attack; [`SECURITY-STATUS.md`](SECURITY-STATUS.md) is the controlling
-status and release-gate document.
+Poseidon attack, and Rescue Prime stands beside it as the second candidate;
+[`SECURITY-STATUS.md`](SECURITY-STATUS.md) is the controlling status and
+release-gate document.
 
 The verifier's costs are deterministic QRVM gas: the developer node and the Kurtosis
 composition price the same opcodes, so the measured cells carry over to the public
@@ -296,7 +297,7 @@ The contract hashes calldata at 6 gas per 64-byte word (keccak256 on the QRVM is
 about 2.03M gas, and carries 7,710 transfers at 16 bytes. The STARK binds the
 data by recomputing the same keccak256 inside the circuit (about 1,810 Keccak-f
 permutations per 246 KB, section 6.2), which is the one place keccak must appear
-in an otherwise Poseidon2 circuit.
+in a circuit that otherwise uses the selected hash suite.
 
 ### 3.3 Gas budget per batch
 
@@ -434,14 +435,28 @@ Verifying a keccak-committed STARK inside another STARK is expensive because
 keccak256 is expensive in arithmetic circuits: a Keccak-f[1600] permutation costs
 24 rows of an AIR with about 2,600 columns in Plonky3's keccak AIR (cited, Plonky3
 repository), and a c3 n = 20 proof needs 3,135 hashes plus the transcript flushes,
-about 200M trace cells just for the hashing. Poseidon2 (cited, ePrint 2023/323) is
-the current cost-study candidate: over Goldilocks it costs one row of a few hundred
-columns per permutation, about 200 times less. Its selection is blocked on the
-review in `SECURITY-STATUS.md`. On the QRVM the ratio is reversed: a keccak
-compression costs 36 gas and the candidate Poseidon2 permutation would cost tens
-of thousands of gas (roughly 340 S-box multiplications and 30 linear layers over
-512-bit words, estimate: 35k to 40k gas per permutation). This motivates a
-hash-agile two-layer shape:
+about 200M trace cells just for the hashing. Two candidates sit under the review
+gate of `SECURITY-STATUS.md`, and neither is selected. Poseidon2 (cited, ePrint
+2023/323) is the cost-study candidate: over Goldilocks it costs one row of a few
+hundred columns per permutation, about 200 times less than keccak. Rescue Prime
+(cited, ePrint 2019/426 and 2020/1143; `p3-rescue` in the pinned Plonky3, with a
+Rescue Prime Optimized Goldilocks instance, cited, ePrint 2022/1577) is the
+conservative candidate that a QRL core contributor recommended for Merkle
+commitments because of its margin against algebraic attacks: every round applies
+`x^7` and then `x^(1/7)` to the full state, so there is no partial layer, and the
+round count carries the specification's 50 percent margin. Its proving cost is
+higher. The AIR constrains the inverse S-box through `y^7 = x` at the same degree
+as the forward one, so the constraint count per permutation stays within a small
+factor of Poseidon2's; the native evaluation of `x^(1/7)` is a full exponentiation
+per lane, so trace generation is several times slower (estimate; the M10 benchmark
+measures both). On the QRVM the ratio is reversed: a keccak compression costs 36
+gas, the candidate Poseidon2 permutation would cost tens of thousands of gas
+(roughly 340 S-box multiplications and 30 linear layers over 512-bit words,
+estimate: 35k to 40k gas per permutation), and a Rescue Prime permutation about
+two to three times that (one modexp call of about 440 gas per inverse S-box and a
+dense 12 x 12 matrix product twice per round, estimate) until the Rescue Prime
+precompile the QRL side plans at slot 0x20 exists. This motivates a hash-agile
+two-layer shape:
 
 | Layer            | Field / hash                                | Verified by                                   | Proof shape                                                                   |
 | ---------------- | ------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -474,7 +489,9 @@ batches it covers. The Plonky3 recursion library currently uses Poseidon2-based
 hashing and supports chaining layers and aggregating independent proofs (cited,
 Plonky3-recursion book). Adopting it therefore depends on the hash review as well
 as confirming a Goldilocks configuration and keccak-committed outer layer against
-the selected release.
+the selected release. A Rescue Prime inner layer needs its own hash AIR in that
+recursion stack, which the M10 benchmark prices together with the permutation
+itself.
 
 ### 4.4 Cadence
 
@@ -529,8 +546,9 @@ RFC 8391) need only a hash function. Under the current Poseidon2 cost model over
 Goldilocks, verification is a few hundred to about a thousand permutations at one
 AIR row of a few hundred columns each, about 0.1 to 0.3M trace cells, one to two
 orders of magnitude below ML-DSA-87. The estimate must be rerun for the selected
-hash suite. Ethereum's post-quantum consensus work has formalized
-exactly this family: "Hash-Based Multi-Signatures for Post-Quantum Ethereum"
+hash suite; with Rescue Prime the permutation count is unchanged and each
+permutation costs more (section 4.3). Ethereum's post-quantum consensus work has
+formalized exactly this family: "Hash-Based Multi-Signatures for Post-Quantum Ethereum"
 (cited, ePrint 2025/055) gives XMSS-style schemes with SHA-3 or Poseidon2
 instantiations and parameter tables at a stated security level, and LeanSig
 (cited, ePrint 2025/1332) adds an incomparable encoding that lowers verification
@@ -576,7 +594,8 @@ verifies ML-DSA-87.
 
 Recommendation: versioned hash-based signatures for L2 accounts, ML-DSA-87 at the
 bridge, and account abstraction from day one so the hash suite can change without
-a state migration. Poseidon2 remains a benchmark candidate pending the review gate.
+a state migration. Poseidon2 and Rescue Prime remain the benchmark candidates pending
+the review gate.
 
 1. Phase 1 (testnet): after the hash gate closes, one WOTS+/XMSS scheme with an
    explicit hash-suite identifier and reviewed parameters, keys derived from the
@@ -607,15 +626,15 @@ the 7.3 KB of signature and key calldata).
 
 ### 6.2 What is missing, and the order to add it
 
-| #   | Gap                           | Why it matters                                                                                                                                      | Design                                                                                                                                                                                                                                                                                                                       |
-| --- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Public-values schema          | Today the proof binds only two roots; nothing ties a batch to its data, deposits, withdrawals or batch number                                       | `prevRoot, newRoot, batchIndex, depositAccumulator consumed (before, after), dataHashes[] (from postData), withdrawalRoot, inboxPointer`; all as 32-bit limbs; the AIR recomputes the keccak256 chains (deposit accumulator, data hashes) so L1's cheap keccak is the binding on both sides                                  |
-| 2   | Withdrawal subtree commitment | Withdrawals currently verify under the raw state root; the L2 state tree will use the selected circuit hash, which L1 may be unable to walk cheaply | The batch publishes the withdrawal list in calldata; the contract recomputes its keccak256 root (6 gas per word) and stores it per batch; the STARK proves the same list was authorized in the L2 state; `withdraw` proves inclusion under that stored root (32 levels, about 4k gas of hashing on top of the measured 346k) |
-| 3   | Forced inclusion              | A censoring sequencer must not be able to lock funds                                                                                                | L1 inbox `enqueue(bytes l2tx)` (paid with the ML-DSA-87 L1 key, so it doubles as the emergency path for users whose L2 key state is lost); the public values carry the consumed inbox pointer; `submitBatch` rejects a batch whose pointer lags the queue head by more than `N` batches or `T` time                          |
-| 4   | Escape hatch                  | If no valid batch lands for `T`, users need to exit against the last root without the operator                                                      | Emergency exit needs an L1 path verifier for the selected state hash; the current Poseidon2 estimate is about 1.3M gas for a 32-level path, while a Keccak state tree is cheaper on L1 and dearer in the AIR                                                                                                                 |
-| 5   | Upgrade governance            | An upgradeable bridge is the largest trust assumption of every rollup                                                                               | Verifier and registry immutable; the bridge behind a timelocked proxy controlled by an ML-DSA-87 multisig council; a proof-system upgrade is a new verifier plus a new `programId` and a migration batch proven by both programs; users get the timelock window to exit                                                      |
-| 6   | Sequencer role and liveness   | Anyone can submit a valid batch today, which is right for liveness and wrong for ordering                                                           | Named sequencer with a permissionless fallback after `T` without a batch; batch ordering by `prevRoot` already prevents forks                                                                                                                                                                                                |
-| 7   | Defense in depth              | A verifier or circuit bug must not drain the pool in one block                                                                                      | Withdrawal delay (one L1 finality period), per-epoch withdrawal cap, pause by the council, and the fact registry's `(verifier, programId)` key so a replaced verifier never satisfies old consumers                                                                                                                          |
+| #   | Gap                           | Why it matters                                                                                                                                      | Design                                                                                                                                                                                                                                                                                                                                                              |
+| --- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Public-values schema          | Today the proof binds only two roots; nothing ties a batch to its data, deposits, withdrawals or batch number                                       | `prevRoot, newRoot, batchIndex, depositAccumulator consumed (before, after), dataHashes[] (from postData), withdrawalRoot, inboxPointer`; all as 32-bit limbs; the AIR recomputes the keccak256 chains (deposit accumulator, data hashes) so L1's cheap keccak is the binding on both sides                                                                         |
+| 2   | Withdrawal subtree commitment | Withdrawals currently verify under the raw state root; the L2 state tree will use the selected circuit hash, which L1 may be unable to walk cheaply | The batch publishes the withdrawal list in calldata; the contract recomputes its keccak256 root (6 gas per word) and stores it per batch; the STARK proves the same list was authorized in the L2 state; `withdraw` proves inclusion under that stored root (32 levels, about 4k gas of hashing on top of the measured 346k)                                        |
+| 3   | Forced inclusion              | A censoring sequencer must not be able to lock funds                                                                                                | L1 inbox `enqueue(bytes l2tx)` (paid with the ML-DSA-87 L1 key, so it doubles as the emergency path for users whose L2 key state is lost); the public values carry the consumed inbox pointer; `submitBatch` rejects a batch whose pointer lags the queue head by more than `N` batches or `T` time                                                                 |
+| 4   | Escape hatch                  | If no valid batch lands for `T`, users need to exit against the last root without the operator                                                      | Emergency exit needs an L1 path verifier for the selected state hash; the current Poseidon2 estimate is about 1.3M gas for a 32-level path, a Rescue Prime path about two to three times that without a precompile and 32 precompile calls with the 0x20 precompile the QRL side plans (estimate), while a Keccak state tree is cheaper on L1 and dearer in the AIR |
+| 5   | Upgrade governance            | An upgradeable bridge is the largest trust assumption of every rollup                                                                               | Verifier and registry immutable; the bridge behind a timelocked proxy controlled by an ML-DSA-87 multisig council; a proof-system upgrade is a new verifier plus a new `programId` and a migration batch proven by both programs; users get the timelock window to exit                                                                                             |
+| 6   | Sequencer role and liveness   | Anyone can submit a valid batch today, which is right for liveness and wrong for ordering                                                           | Named sequencer with a permissionless fallback after `T` without a batch; batch ordering by `prevRoot` already prevents forks                                                                                                                                                                                                                                       |
+| 7   | Defense in depth              | A verifier or circuit bug must not drain the pool in one block                                                                                      | Withdrawal delay (one L1 finality period), per-epoch withdrawal cap, pause by the council, and the fact registry's `(verifier, programId)` key so a replaced verifier never satisfies old consumers                                                                                                                                                                 |
 
 Order: 1, 2, 3, 4, 5, 7, 6. Items 1 and 2 are needed before any batch carries real
 value; 3 and 4 are the user rights that make the rollup trust-minimized; 5 and 7
@@ -751,11 +770,15 @@ layer or when the L2 needs general contracts.
 ## 9. Open questions and next experiments
 
 1. Hash security gate: resolve whether the 2026 S-box-skipping result applies to
-   the exact Poseidon2 Goldilocks candidates, recompute parameters and compare a
-   conservative Keccak baseline as specified in `SECURITY-STATUS.md`.
+   the exact Poseidon2 Goldilocks candidates, fix the Rescue Prime instance and
+   confirm its round count and constant derivation, recompute parameters for
+   both, and compare a conservative Keccak baseline as specified in
+   `SECURITY-STATUS.md`; the Least Authority audit's notes on Poseidon2 round
+   constants and MDS checks (`VERIFIER.md` section 8) are inputs.
 2. Layout version 2 and a hash-suite interface: add multi-commitment,
-   mixed-height and quotient-chunk support, then benchmark Poseidon2 only under
-   an experimental suite identifier. Target below +1M gas at n = 20.
+   mixed-height and quotient-chunk support, then benchmark Poseidon2 and Rescue
+   Prime only under experimental suite identifiers. Target below +1M gas at
+   n = 20.
 3. Keccak AIR proof at 2^16 rows to size the data-binding and deposit-chain
    cost per batch (about 24 rows per 136 bytes of data, section 3.2).
 4. Full protocol gate: build `gqrl` from the clean pinned source, require the
@@ -768,7 +791,10 @@ layer or when the L2 needs general contracts.
    900 gas per pair; a "verify pruned keccak multi-opening" precompile at about 40
    gas per node would save about 0.85M and a Goldilocks fold precompile about
    1.1M per c3 n = 20 verification. Both need a network upgrade; write the note
-   after the L2's AIR set is fixed so the precompile matches real proofs.
+   after the L2's AIR set is fixed so the precompile matches real proofs. The QRL
+   side plans an extended precompile set with Rescue Prime at slot 0x20 and a
+   STARK verifier at slot 0x21; the note takes those slots as given and states
+   what a keccak-committed final layer needs from a 0x21 verifier.
 7. Calldata compression: measure state-diff sizes on a simulated workload;
    structural compression only (index addressing, variable-length amounts, zero
    bytes at 4 gas), since nothing on L1 can decompress a general-purpose codec.
@@ -795,26 +821,27 @@ layer or when the L2 needs general contracts.
 
 ## 10. Decision table and next steps
 
-| Question                      | Decision                                                                                                            | Basis                                                                                     |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Final on-chain proof system   | Plonky3 uni-stark, Goldilocks, keccak256 Merkle and Fiat-Shamir; c3 benchmark, production profile pending           | measured c3 at 2.10M for n = 12 and 4.14M for n = 20; soundness gate remains open         |
-| Trace size of the final proof | n <= 20 (105,873 bytes); n = 22 only after confirming the pool cap                                                  | 128 KB transaction cap binds before gas                                                   |
-| Data availability             | Rollup: calldata in `postData` transactions hashed on chain and in circuit                                          | 260 to 540 gas per transfer; validium attestation costs 245k gas per ML-DSA-87 signature  |
-| Batch amortization            | Two-layer recursion, reviewed circuit hash inside, keccak final                                                     | verifier cost is fixed per proof; hash choice is gated by `SECURITY-STATUS.md`            |
-| L2 account signatures         | Versioned hash-based scheme, index enforced by the state, account abstraction for rotation                          | Poseidon2 cost model is promising; the production hash suite remains open                 |
-| Privacy                       | Out of scope for the initial scaling track                                                                          | current proof format rejects randomized ZK commitments                                    |
-| L1 boundary                   | ML-DSA-87 through `StateBridge.withdraw`, deposits with the L1 key                                                  | precompile `0x03`, measured 346k gas per withdrawal                                       |
-| Bridge additions              | public-values schema, withdrawal root, forced inclusion, escape hatch, governance, defense in depth, sequencer role | section 6.2 order                                                                         |
-| Topology                      | Centralized sequencer and prover first, proof market second, sequencer decentralization third                       | section 7                                                                                 |
-| Execution environment         | Custom AIR set for payments; zkVM later                                                                             | no keccak-committed final layer exists in SP1 or OpenVM; pairing wrappers unusable on QRL |
-| Contingency for large proofs  | Staged verification via the fact registry                                                                           | `docs/STAGED-VERIFICATION.md`; every block addressable from the prefix                    |
+| Question                      | Decision                                                                                                            | Basis                                                                                                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Final on-chain proof system   | Plonky3 uni-stark, Goldilocks, keccak256 Merkle and Fiat-Shamir; c3 benchmark, production profile pending           | measured c3 at 2.10M for n = 12 and 4.14M for n = 20; soundness gate remains open                                                                                            |
+| Trace size of the final proof | n <= 20 (105,873 bytes); n = 22 only after confirming the pool cap                                                  | 128 KB transaction cap binds before gas                                                                                                                                      |
+| Data availability             | Rollup: calldata in `postData` transactions hashed on chain and in circuit                                          | 260 to 540 gas per transfer; validium attestation costs 245k gas per ML-DSA-87 signature                                                                                     |
+| Batch amortization            | Two-layer recursion, reviewed circuit hash inside, keccak final                                                     | verifier cost is fixed per proof; the hash choice is gated by `SECURITY-STATUS.md` and the final layer hashes with keccak256 in every case                                   |
+| Circuit hash suite            | Open: Poseidon2 or Rescue Prime, benchmarked under experimental suite identifiers; keccak256 on chain in every case | ePrint 2026/1692 reopened the selection; a QRL core contributor recommends Rescue Prime and plans a 0x20 precompile for it; the audit's constant and MDS notes feed the gate |
+| L2 account signatures         | Versioned hash-based scheme, index enforced by the state, account abstraction for rotation                          | Poseidon2 cost model is promising and Rescue Prime is the conservative alternative; the production hash suite remains open                                                   |
+| Privacy                       | Out of scope for the initial scaling track                                                                          | current proof format rejects randomized ZK commitments                                                                                                                       |
+| L1 boundary                   | ML-DSA-87 through `StateBridge.withdraw`, deposits with the L1 key                                                  | precompile `0x03`, measured 346k gas per withdrawal                                                                                                                          |
+| Bridge additions              | public-values schema, withdrawal root, forced inclusion, escape hatch, governance, defense in depth, sequencer role | section 6.2 order                                                                                                                                                            |
+| Topology                      | Centralized sequencer and prover first, proof market second, sequencer decentralization third                       | section 7                                                                                                                                                                    |
+| Execution environment         | Custom AIR set for payments; zkVM later                                                                             | no keccak-committed final layer exists in SP1 or OpenVM; pairing wrappers unusable on QRL                                                                                    |
+| Contingency for large proofs  | Staged verification via the fact registry                                                                           | `docs/STAGED-VERIFICATION.md`; every block addressable from the prefix                                                                                                       |
 
 Next steps, in order:
 
 1. Close M9.1: source-match the gqrl binary and run the full live protocol gate.
-2. M10: hash-security decision gate, then layout version 2 with a hash-suite
-   boundary (multi-commitment, mixed height, quotient chunks), measured on the
-   dev node.
+2. M10: hash-security decision gate over Poseidon2 and Rescue Prime, then layout
+   version 2 with a hash-suite boundary (multi-commitment, mixed height, quotient
+   chunks), measured on the dev node.
 3. M11: keccak AIR for data binding; `postData` and the public-values schema in
    `StateBridge`; withdrawal root; forced-inclusion inbox.
 4. M12: recursion prototype (selected circuit hash inside, keccak final) with
@@ -845,6 +872,17 @@ upstream releases.
   https://eprint.iacr.org/2023/537
 - From Round Skipping to S-Box Skipping (Poseidon partial layer):
   https://eprint.iacr.org/2026/1692
+- Rescue (Marvellous family), "Design of Symmetric-Key Primitives for Advanced
+  Cryptographic Protocols": https://eprint.iacr.org/2019/426
+- Rescue-Prime: a Standard Specification (SoK): https://eprint.iacr.org/2020/1143
+- Rescue-Prime Optimized (the Goldilocks width-12 instance in `p3-rescue`):
+  https://eprint.iacr.org/2022/1577
+- `p3-rescue` crate (Rescue Prime and RPO in the pinned Plonky3 release):
+  https://crates.io/crates/p3-rescue
+- Least Authority, Plonky3 security audit for Polygon (updated final report of
+  7 November 2024; commits `2edbd19` and `7bb6db5`):
+  https://leastauthority.com/blog/audit-of-plonky3/ (report PDF:
+  https://leastauthority.com/polygon-plonky3-final-audit-report/)
 - FIPS 204, ML-DSA (parameters, key and signature sizes):
   https://csrc.nist.gov/pubs/fips/204/final
 - Saarinen, "Benchmarking RISC-V Post-Quantum Crypto", RISC-V Summit 2023
