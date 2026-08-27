@@ -14,7 +14,7 @@ How to read the numbers:
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | measured   | Receipt or `qrl_estimateGas` value from the gqrl developer node at 20,000,000 gas limit, hypc `0.2.0-develop.2026.8.25`; `docs/VERIFIER.md` cells are optimizer runs 200, `docs/GAS-REPORT.md` cells are runs 1000000 (2 to 6 percent cheaper, same code-size cap) |
 | exact size | Byte length of a proof the prover produced (`test/vectors/`, `test/vectors/large/`)                                                                                                                                                                                |
-| model      | The calibrated gas model of section 2.5, fitted to the measured cells (deviation between -0.9 and +1.1 percent on every measured cell)                                                                                                                             |
+| model      | The calibrated gas model of section 2.5, fitted to the measured cells (deviation between -1.0 and +1.1 percent on every measured cell)                                                                                                                             |
 | formula    | The prover's `sizes` command (pruned sibling count model); it overestimates exact sizes by 5 to 10 percent, so the model scales formula bytes and hashes by 0.95                                                                                                   |
 | cited      | External claim with a URL in the Sources section; treat as hedged, the numbers move with upstream releases                                                                                                                                                         |
 
@@ -49,26 +49,26 @@ set for payments first and treat a RISC-V zkVM as a later programmability step.
 The numbers that decide this:
 
 - One c3 verification costs 2.10M gas at a 2^12 trace (measured, direct call, 43,152
-  proof bytes, runs 200) and 4.14M gas at 2^20 (measured, direct call, 105,873
-  bytes, runs 1000000; 4.32M through the gas meter; 4.30M by the runs-200 model).
+  proof bytes, runs 200) and 4.08M gas at 2^20 (measured, direct call, 103,217
+  bytes, runs 1000000; 4.25M through the gas meter; 4.23M by the runs-200 model).
   Both sit far below the 8M target and the 20M block cap. Calldata is 22 to 34
-  percent of the small cells and 39 to 41 percent at 2^20 because Merkle siblings
+  percent of the small cells and 39 to 40 percent at 2^20 because Merkle siblings
   grow with the tree height.
 - The binding limit is the transaction size cap of the node's transaction pool
   (128 KB, the same constant as go-ethereum), reached by c3 near a 2^22 trace, by c2
-  at 2^20 (134,801 proof bytes, a 142,491-byte transaction, refused) and by c1
-  already at 2^16 (147,462 bytes, refused). Gas would allow c3 up to 2^28 (7.1M,
+  at 2^20 (136,529 proof bytes, a 144,219-byte transaction, refused) and by c1
+  already at 2^16 (143,814 bytes, refused). Gas would allow c3 up to 2^28 (7.1M,
   model). Proof size therefore caps a single on-chain proof at about 2^20 to 2^22
   rows, and recursion or staged verification is the way past it.
 - A transfer needs about 16 bytes of calldata when the signature stays off chain
   (256 gas at the non-zero byte rate). With the proof and two 123 KB data
-  transactions a batch of 15,400 transfers costs 8.4M gas, 540 gas per transfer, 39
+  transactions a batch of 15,400 transfers costs 8.3M gas, 540 gas per transfer, 39
   times below the 21,000 gas of a native transfer that also drags a 7.2 KB
   ML-DSA-87 envelope through every block. With recursion the per-transfer cost
   approaches the calldata floor of about 260 gas.
 - A 2^20 trace holds roughly 1,000 to 3,500 hash-based-signature transfers, so
-  without recursion the verification cost dominates (1.5k to 4.2k gas per
-  transfer). Recursion is what turns the verifier's fixed 4.3M into an amortized
+  without recursion the verification cost dominates (1.5k to 3.6k gas per
+  transfer). Recursion is what turns the verifier's fixed 4.2M into an amortized
   cost, which is why it is on the critical path.
 - An off-chain data committee attested with ML-DSA-87 costs about 245k gas per
   committee signature on L1 (precompile plus 7.2 KB of calldata), so a 5-of-7
@@ -94,7 +94,7 @@ settings are 2 to 6 percent cheaper (`docs/VERIFIER.md` section 5.1).
 
 | Cell      | Proof bytes | Calldata gas |  estimate |   gasUsed |     inner | Calldata share of gasUsed |
 | --------- | ----------: | -----------: | --------: | --------: | --------: | ------------------------: |
-| c1 n = 10 |      54,672 |      873,612 | 3,750,528 | 3,884,092 | 2,926,926 |                    22.5 % |
+| c1 n = 10 |      53,904 |      861,468 | 3,733,220 | 3,825,803 | 2,920,801 |                    22.5 % |
 | c1 n = 12 |      81,744 |    1,306,020 | 4,766,815 | 4,906,439 | 3,545,739 |                    26.6 % |
 | c2 n = 10 |      36,016 |      576,080 | 2,161,178 | 2,226,848 | 1,612,215 |                    25.9 % |
 | c2 n = 12 |      49,968 |      798,196 | 2,678,984 | 2,768,302 | 1,924,901 |                    28.8 % |
@@ -109,18 +109,18 @@ sibling values per round).
 
 The large traces, measured through the same meter at runs 1000000
 (`docs/GAS-REPORT.md`; the small cells at that setting are 2 to 4 percent below
-the runs-200 rows above, for example c3 n = 12 at 2,041,137 / 2,120,504):
+the runs-200 rows above, for example c3 n = 12 at 2,036,871 / 2,115,855):
 
 | Cell      | Proof bytes | Calldata gas |  estimate |   gasUsed |     inner | Calldata share of gasUsed |
 | --------- | ----------: | -----------: | --------: | --------: | --------: | ------------------------: |
-| c2 n = 16 |      90,918 |    1,451,492 | 4,070,691 | 4,225,400 | 2,716,415 |                    34.4 % |
-| c3 n = 16 |      71,494 |    1,141,748 | 3,046,838 | 3,169,742 | 1,976,562 |                    36.0 % |
-| c3 n = 20 |     105,873 |    1,689,992 | 4,137,913 | 4,318,167 | 2,565,756 |                    39.1 % |
+| c2 n = 16 |      88,838 |    1,418,688 | 4,019,513 | 4,170,795 | 2,695,271 |                    34.0 % |
+| c3 n = 16 |      69,510 |    1,110,052 | 3,003,387 | 3,123,117 | 1,962,233 |                    35.5 % |
+| c3 n = 20 |     103,217 |    1,647,284 | 4,077,579 | 4,253,185 | 2,544,382 |                    38.7 % |
 
 Nine large vectors could not be measured because the node's transaction pool
 refused them as `oversized data` (limit 131,072 bytes): c1 at n = 16 (transaction
-size 155,163) and n = 20 (234,331), c2 at n = 20 (142,491), c3-binary at n = 16
-(136,539) and n = 20 (210,267), and the c1-binary and c2-binary cells at both
+size 151,504) and n = 20 (234,075), c2 at n = 20 (144,219), c3-binary at n = 16
+(135,304) and n = 20 (205,524), and the c1-binary and c2-binary cells at both
 sizes. The difference between transaction size and proof bytes is 7,690 bytes in
 every case (the ML-DSA-87 envelope plus RLP and ABI framing), which section 4.2
 uses as the exact overhead.
@@ -131,15 +131,15 @@ uses as the exact overhead.
 
 | Phase                                                |       Gas |  Share | Scales with                                    |
 | ---------------------------------------------------- | --------: | -----: | ---------------------------------------------- |
-| prepare (parse, canonical scan, tables, decode)      |    87,821 |  6.3 % | proof bytes (about 50 gas per 64 bytes)        |
-| absorbInstance (transcript steps 1 to 10, selectors) |     8,235 |  0.6 % | fixed per AIR                                  |
+| prepare (parse, canonical scan, tables, decode)      |    88,606 |  6.4 % | proof bytes (about 50 gas per 64 bytes)        |
+| absorbInstance (transcript steps 0 to 10, selectors) |     8,726 |  0.6 % | fixed per AIR                                  |
 | checkConstraints                                     |     4,194 |  0.3 % | number and degree of constraints               |
 | friTranscript (betas, final poly, PoW, 34 indices)   |    18,765 |  1.4 % | rounds, queries                                |
-| inputBlocks (sort, 68 leaf hashes, two walks)        |   263,593 | 19.0 % | queries x tree height (about 315 gas per hash) |
+| inputBlocks (sort, 68 leaf hashes, two walks)        |   263,915 | 19.0 % | queries x tree height (about 315 gas per hash) |
 | reducedOpenings (34 points, 68 inversions, 34 ro)    |   113,497 |  8.2 % | queries (about 3,340 per query)                |
-| foldChains (102 rounds of arity 8, 34 final checks)  |   726,197 | 52.3 % | queries x rounds (6,324 per arity-8 round)     |
-| roundBlocks (three walks)                            |   166,809 | 12.0 % | queries x rounds x height                      |
-| Sum                                                  | 1,389,111 |  100 % |                                                |
+| foldChains (102 rounds of arity 8, 34 final checks)  |   726,179 | 52.3 % | queries x rounds (6,324 per arity-8 round)     |
+| roundBlocks (three walks)                            |   164,544 | 11.9 % | queries x rounds x height                      |
+| Sum                                                  | 1,388,426 |  100 % |                                                |
 
 Per (query, round) cost of a fold by arity: 2,766 (arity 2), 3,913 (arity 4), 6,324
 (arity 8), 10,784 (arity 16) gas. A keccak compression itself costs 36 gas; the
@@ -181,12 +181,12 @@ parameter regimes (cited: ePrint 2025/2046 and 2025/2055); Goldilocks is a prime
 field, so the 118-bit figure must be read as a conjecture under active revision.
 
 Levers, priced with the model of section 2.5 at `n = 20` (runs 200; the c3 row was
-measured at 4.14M at runs 1000000):
+measured at 4.08M at runs 1000000):
 
 | Variant                 | Conjectured bits | Rough provable bits | Proof bytes (formula x 0.95) | Gas (model) |
 | ----------------------- | ---------------: | ------------------: | ---------------------------: | ----------: |
-| c3 (lb 3, Q 34, PoW 16) |              118 |                  67 |              105,873 (exact) |       4.30M |
-| c3 with 24 PoW bits     |              126 |                  75 |                      105,873 |       4.30M |
+| c3 (lb 3, Q 34, PoW 16) |              118 |                  67 |              103,217 (exact) |       4.23M |
+| c3 with 24 PoW bits     |              126 |                  75 |                      103,217 |       4.23M |
 | lb 4, Q 26, PoW 16      |              120 |                  68 |                       93,800 |       3.61M |
 | lb 4, Q 52, PoW 16      |              224 |                 120 |                      174,421 |       6.78M |
 | c3 with Q 68            |              220 |                 118 |                      196,795 |       8.10M |
@@ -213,37 +213,37 @@ foldChains = Q * (sum over rounds of fold(arity) + 2,400)  with fold(2) = 2,766,
 
 Bytes and hash counts are exact for every vector that exists (n <= 20) and formula
 values scaled by 0.95 for `n = 24` and `n = 28`. Deviation from the six measured
-runs-200 `estimate` cells and `c3-binary n = 12`: -0.9 to +1.1 percent. Against the
-three large cells measured at runs 1000000 the runs-200 model is 3.4 to 4.0 percent
-high (c3 n = 16: 3.16M against 3.05M; c3 n = 20: 4.30M against 4.14M; c2 n = 16:
-4.21M against 4.07M), the same gap the two optimizer settings show on the small
+runs-200 `estimate` cells and `c3-binary n = 12`: -1.0 to +1.1 percent. Against the
+three large cells measured at runs 1000000 the runs-200 model is 3.2 to 3.7 percent
+high (c3 n = 16: 3.10M against 3.00M; c3 n = 20: 4.23M against 4.08M; c2 n = 16:
+4.15M against 4.02M), the same gap the two optimizer settings show on the small
 cells. Direct `verify` call; measured cells are marked, everything else is the
 runs-200 model:
 
 | Preset    | n = 16 (bytes / gas)            | n = 20 (bytes / gas)             | n = 24 (bytes / gas) | n = 28 (bytes / gas) |
 | --------- | ------------------------------- | -------------------------------- | -------------------- | -------------------- |
-| c3        | 71,494 / 3.05M measured         | 105,873 / 4.14M measured         | ~144,800 / 5.60M     | ~189,300 / 7.09M     |
-| c2        | 90,918 / 4.07M measured         | 134,801 / 5.71M (refused, size)  | ~199,900 / 7.75M     | ~262,300 / 9.85M     |
-| c1        | 147,462 / 7.36M (refused, size) | 226,641 / 10.15M (refused, size) | ~349,100 / 14.06M    | ~465,700 / 18.0M     |
-| c3-binary | 127,614 / 5.22M (refused, size) |                                  |                      |                      |
+| c3        | 69,510 / 3.00M measured         | 103,217 / 4.08M measured         | ~144,800 / 5.60M     | ~189,300 / 7.09M     |
+| c2        | 88,838 / 4.02M measured         | 136,529 / 5.76M (refused, size)  | ~199,900 / 7.75M     | ~262,300 / 9.85M     |
+| c1        | 143,814 / 7.26M (refused, size) | 226,385 / 10.14M (refused, size) | ~349,100 / 14.06M    | ~465,700 / 18.0M     |
+| c3-binary | 127,614 / 5.18M (refused, size) |                                  |                      |                      |
 
 `docs/GAS-REPORT.md` extrapolates n = 24 by scaling the plan formula with the
-measured-to-formula ratio of the largest measured cell and lands at 5.61M for c3,
-7.95M for c2 and 15.26M for c1, within 3 percent of the phase model for c3 and
-c2 and 9 percent for c1 (whose largest measured cell is n = 12).
+measured-to-formula ratio of the largest measured cell and lands at 5.83M for c3,
+8.11M for c2 and 14.75M for c1, within 5 percent of the phase model for all three
+presets.
 
 The calldata share of the c3 column: 36 percent at n = 16, 39 percent at n = 20,
 41 percent at n = 24, 43 percent at n = 28. The compute side of c3 at n = 20 splits
-into folds 1.29M (50 percent), Merkle walks 1.01M (39 percent), prepare 0.14M,
+into folds 1.29M (50 percent), Merkle walks 0.98M (38 percent), prepare 0.13M,
 reduced openings 0.11M, transcript and constraints 0.04M (model; the measured inner
-gas at runs 1000000 is 2.57M including the STATICCALL framing). Through the bridge
+gas at runs 1000000 is 2.54M including the STATICCALL framing). Through the bridge
 the proof transaction pays about 0.16M more (`submitBatch` with registration
 measured 155,618 gas against the mock verifier), so a c3 batch proof at n = 20 is
-about 4.30M gas end to end at runs 1000000; the rest of this document uses that
+about 4.23M gas end to end at runs 1000000; the rest of this document uses that
 figure.
 
 The plan's original `sizes` formula (`2,500 * Q * R` compute per query-round)
-underestimates the measured n = 20 cell by 47 percent (2.81M against 4.14M) because
+underestimates the measured n = 20 cell by 48 percent (2.76M against 4.08M) because
 an arity-8 round costs 6,324 gas where the formula assumed 2,500 and the Merkle
 walks cost 315 gas per hash where it assumed 130; its byte counts are within 10
 percent. Use the phase model
@@ -281,9 +281,9 @@ The node's transaction pool rejects transactions above 131,072 bytes
 validation error is `oversized data`, recorded nine times in `docs/GAS-REPORT.md`).
 The measured overhead of a `verify` transaction over its proof bytes is 7,690 bytes
 (the 7,219-byte ML-DSA-87 envelope plus RLP and ABI framing), so the largest proof
-a single transaction can carry is 123,382 bytes. A c3 proof at n = 20 (105,873
-bytes, a 113,563-byte transaction) leaves about 17.5 KB in the same transaction,
-which caps inline data at about 1,090 transfers. The batch data therefore goes into
+a single transaction can carry is 123,382 bytes. A c3 proof at n = 20 (103,217
+bytes, a 110,907-byte transaction) leaves about 20.2 KB in the same transaction,
+which caps inline data at about 1,260 transfers. The batch data therefore goes into
 separate data transactions:
 
 ```
@@ -305,21 +305,21 @@ The consensus cap is 20,000,000 per block. A steady-state target of at most half
 block per slot for the L2 (10M) leaves the other half for wallet transfers, swaps,
 QNS and staking traffic; the data and proof transactions are independent, so the
 block builder can also spread them over consecutive slots. With the c3 proof at
-n = 20 (4.14M direct, measured at runs 1000000; 4.30M through the bridge):
+n = 20 (4.08M direct, measured at runs 1000000; 4.23M through the bridge):
 
 | Batch composition                               |               Gas | Transfers carried | Gas per transfer | Comment                                                  |
 | ----------------------------------------------- | ----------------: | ----------------: | ---------------: | -------------------------------------------------------- |
-| proof only (validium)                           |             4.30M |   (trace-limited) |                  | data attested off chain                                  |
-| proof + 17.5 KB inline data                     |             4.58M |             1,090 |            4,200 | one transaction, fits the pool cap                       |
-| proof + 1 data transaction                      |             6.33M |             7,710 |              821 |                                                          |
-| proof + 2 data transactions                     |             8.36M |            15,420 |              542 | recommended steady state under a 10M budget              |
-| proof + 3 data transactions                     |            10.39M |            23,130 |              449 | exceeds a 10M budget, fits the block                     |
-| k batches per proof (recursion), 2 data tx each | 4.30M + k x 4.06M |        k x 15,420 |    263 + 279 / k | floor is the calldata cost of about 260 gas per transfer |
+| proof only (validium)                           |             4.23M |   (trace-limited) |                  | data attested off chain                                  |
+| proof + 20.2 KB inline data                     |             4.55M |             1,260 |            3,600 | one transaction, fits the pool cap                       |
+| proof + 1 data transaction                      |             6.26M |             7,710 |              812 |                                                          |
+| proof + 2 data transactions                     |             8.29M |            15,420 |              538 | recommended steady state under a 10M budget              |
+| proof + 3 data transactions                     |            10.32M |            23,130 |              446 | exceeds a 10M budget, fits the block                     |
+| k batches per proof (recursion), 2 data tx each | 4.23M + k x 4.06M |        k x 15,420 |    263 + 274 / k | floor is the calldata cost of about 260 gas per transfer |
 
 For comparison a native L1 transfer costs 21,000 gas, so a block holds 952 of them
-and 6.9 MB of ML-DSA-87 envelopes. The rollup's per-transfer cost is 25 to 80 times
-lower at the data-bound batch sizes and 5 to 14 times lower when a 2^20 trace
-limits a batch to 1,000 to 3,500 transfers (4,200 down to about 1,500 gas per
+and 6.9 MB of ML-DSA-87 envelopes. The rollup's per-transfer cost is 26 to 80 times
+lower at the data-bound batch sizes and 6 to 14 times lower when a 2^20 trace
+limits a batch to 1,000 to 3,500 transfers (3,600 down to about 1,500 gas per
 transfer with a partially filled data transaction).
 
 ### 3.4 Transactions per second
@@ -335,7 +335,7 @@ per slot:
 | Limit                                               | Transfers per batch | TPS at 6 s slots | TPS at 60 s slots |
 | --------------------------------------------------- | ------------------: | ---------------: | ----------------: |
 | 2^20 trace, hash-based signatures, no recursion     |      1,000 to 3,500 |       170 to 580 |          17 to 58 |
-| data bound, 2 data transactions per slot (8.4M gas) |              15,420 |            2,570 |               257 |
+| data bound, 2 data transactions per slot (8.3M gas) |              15,420 |            2,570 |               257 |
 | data bound, full block of data (about 9 data tx)    |             ~70,000 |          ~11,600 |            ~1,160 |
 | native L1 transfers (20M / 21,000)                  |                 952 |              159 |                16 |
 
@@ -378,7 +378,7 @@ tree, builds the quotient, and runs FRI; proving work is roughly linear in
 `w * 2^(n + log_blowup)` with an `n` factor from the FFTs. The blowup is the lever
 that trades prover work against verifier cost: c1 (`log_blowup 1`) costs the prover
 a quarter of c3's LDE and hashing and costs the verifier 2.4 times the gas at
-n = 20 (10.15M by the model against the measured 4.14M) and twice the bytes. c3 is
+n = 20 (10.14M by the model against the measured 4.08M) and twice the bytes. c3 is
 the right point for an L1 whose calldata is the scarce resource.
 
 The Fibonacci prover here has width 2, so its timings say little about a real
@@ -386,7 +386,7 @@ AIR. The vector generation log of this milestone (which includes the mirror
 verifier, the transcript logging and the JSON serialization of every intermediate
 value) took 0.5 to 67 seconds per vector at n = 16 and n = 20 on a 20-thread
 laptop; the proving inside that is a fraction, and the c3 n = 20 run is dominated
-by the serialization of the 105 KB proof and its transcript. Treat those as upper
+by the serialization of the 103 KB proof and its transcript. Treat those as upper
 bounds on single-machine proving of a width-2 trace. The shape for a payment AIR:
 
 - Memory: a 2^20 trace of 300 columns at blowup 8 is `2^23 * 300 * 8` bytes, about
@@ -409,7 +409,7 @@ bounds on single-machine proving of a width-2 trace. The shape for a payment AIR
 
 | Ceiling                                                 | c3                                                                                       | c2                                                     | c1                                                     | Source                                                     |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------- |
-| Transaction pool size cap (123,382 usable proof bytes)  | n = 20 fits (113,563-byte transaction, 17.5 KB spare); n = 22 borderline; n = 24 exceeds | n = 16 fits; n = 20 refused (142,491-byte transaction) | n = 12 fits; n = 16 refused (155,163-byte transaction) | node `txMaxSize` constant; `docs/GAS-REPORT.md` rejections |
+| Transaction pool size cap (123,382 usable proof bytes)  | n = 20 fits (110,907-byte transaction, 20.2 KB spare); n = 22 borderline; n = 24 exceeds | n = 16 fits; n = 20 refused (144,219-byte transaction) | n = 12 fits; n = 16 refused (151,504-byte transaction) | node `txMaxSize` constant; `docs/GAS-REPORT.md` rejections |
 | 8M gas target per verification                          | n <= 28                                                                                  | n <= 24                                                | n <= 16                                                | model                                                      |
 | 20M block cap                                           | beyond n = 28                                                                            | beyond n = 28                                          | n <= 28                                                | model                                                      |
 | Verifier memory (about 190 KB peak measured at Q = 100) | no limit in range                                                                        | no limit in range                                      | no limit in range                                      | `docs/VERIFIER.md` section 2                               |
@@ -434,8 +434,8 @@ order of preference:
 Verifying a keccak-committed STARK inside another STARK is expensive because
 keccak256 is expensive in arithmetic circuits: a Keccak-f[1600] permutation costs
 24 rows of an AIR with about 2,600 columns in Plonky3's keccak AIR (cited, Plonky3
-repository), and a c3 n = 20 proof needs 3,135 hashes plus the transcript flushes,
-about 200M trace cells just for the hashing. Two candidates sit under the review
+repository), and a c3 n = 20 proof needs 3,042 hashes plus the transcript flushes,
+about 190M trace cells just for the hashing. Two candidates sit under the review
 gate of `SECURITY-STATUS.md`, and neither is selected. Poseidon2 (cited, ePrint
 2023/323) is the cost-study candidate: over Goldilocks it costs one row of a few
 hundred columns per permutation, about 200 times less than keccak. Rescue Prime
@@ -484,7 +484,7 @@ flow of `StarkVerifierCore`. What changes:
   their observation into the transcript: about 16 KB and 0.3M gas at `w = 500`.
 
 So the final proof's on-chain cost is the c3 n = 20 cell plus roughly 1 to 2M:
-about 5.3 to 6.3M gas (estimate) per aggregated proof, independent of how many
+about 5.2 to 6.2M gas (estimate) per aggregated proof, independent of how many
 batches it covers. The Plonky3 recursion library currently uses Poseidon2-based
 hashing and supports chaining layers and aggregating independent proofs (cited,
 Plonky3-recursion book). Adopting it therefore depends on the hash review as well
@@ -497,7 +497,7 @@ itself.
 
 Without recursion: one batch proof per slot at most, batch size bounded by the
 trace (about 1,000 to 3,500 transfers at 2^20), proving must finish within the
-slot time or batches queue up; per-transfer cost 1.5k to 4.2k gas.
+slot time or batches queue up; per-transfer cost 1.5k to 3.6k gas.
 
 With recursion: the sequencer closes a batch every slot (or every few seconds
 under load), the prover produces batch proofs continuously on a pool of machines,
@@ -506,7 +506,7 @@ slots together with the data transactions of the covered batches. The data
 transactions can be posted as soon as each batch closes, so data availability
 leads the proof by minutes; the state root advances when the proof lands. A
 reasonable first target: data every slot, proof every 10 slots (one minute at 6 s
-slots, ten minutes at 60 s), 4.3 to 6.3M gas per proof, 540 gas per transfer at
+slots, ten minutes at 60 s), 4.2 to 6.2M gas per proof, 540 gas per transfer at
 15,000 transfers per batch and about 290 gas per transfer at ten batches per proof.
 
 ## 5. L2 signature scheme
@@ -669,7 +669,7 @@ wallet (L2 key) --> sequencer RPC --> L2 mempool --> ordering, state transition,
                                      submitter: submitBatch(prevRoot, newRoot, publicValues, proof)
                                                                         |
                                                                         v
-                                        StateBridge -> StarkFactRegistry -> StarkVerifier (4.3 to 6.3M gas)
+                                        StateBridge -> StarkFactRegistry -> StarkVerifier (4.2 to 6.2M gas)
 ```
 
 Latency budget:
@@ -701,7 +701,7 @@ governance decision outside this document; the testnet needs none of it.
 Hardware: one multi-core machine with 64 GB or more handles 2^18 to 2^20 batch
 proofs of a width-300 AIR at c3 in minutes (estimate); the aggregation layer is
 cheaper per proof than the batch layer because its AIR is fixed; the submitter
-needs an L1 account funded for 4.3 to 6.3M gas per proof plus about 2M per data
+needs an L1 account funded for 4.2 to 6.2M gas per proof plus about 2M per data
 transaction.
 
 ## 8. Path to a zkVM
@@ -786,7 +786,7 @@ layer or when the L2 needs general contracts.
    suites with an attached evidence record.
 5. Staged verification: implement and measure only if a 2^24 single proof turns
    out to be needed before recursion exists.
-6. Precompile QIP: the Merkle walks (39 percent of compute at n = 20) run at 315
+6. Precompile QIP: the Merkle walks (38 percent of compute at n = 20) run at 315
    gas per hash with a 36-gas keccak inside, and the folds (50 percent) at about
    900 gas per pair; a "verify pruned keccak multi-opening" precompile at about 40
    gas per node would save about 0.85M and a Goldilocks fold precompile about
@@ -823,8 +823,8 @@ layer or when the L2 needs general contracts.
 
 | Question                      | Decision                                                                                                            | Basis                                                                                                                                                                        |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Final on-chain proof system   | Plonky3 uni-stark, Goldilocks, keccak256 Merkle and Fiat-Shamir; c3 benchmark, production profile pending           | measured c3 at 2.10M for n = 12 and 4.14M for n = 20; soundness gate remains open                                                                                            |
-| Trace size of the final proof | n <= 20 (105,873 bytes); n = 22 only after confirming the pool cap                                                  | 128 KB transaction cap binds before gas                                                                                                                                      |
+| Final on-chain proof system   | Plonky3 uni-stark, Goldilocks, keccak256 Merkle and Fiat-Shamir; c3 benchmark, production profile pending           | measured c3 at 2.10M for n = 12 and 4.08M for n = 20; soundness gate remains open                                                                                            |
+| Trace size of the final proof | n <= 20 (103,217 bytes); n = 22 only after confirming the pool cap                                                  | 128 KB transaction cap binds before gas                                                                                                                                      |
 | Data availability             | Rollup: calldata in `postData` transactions hashed on chain and in circuit                                          | 260 to 540 gas per transfer; validium attestation costs 245k gas per ML-DSA-87 signature                                                                                     |
 | Batch amortization            | Two-layer recursion, reviewed circuit hash inside, keccak final                                                     | verifier cost is fixed per proof; the hash choice is gated by `SECURITY-STATUS.md` and the final layer hashes with keccak256 in every case                                   |
 | Circuit hash suite            | Open: Poseidon2 or Rescue Prime, benchmarked under experimental suite identifiers; keccak256 on chain in every case | ePrint 2026/1692 reopened the selection; a QRL core contributor recommends Rescue Prime and plans a 0x20 precompile for it; the audit's constant and MDS notes feed the gate |

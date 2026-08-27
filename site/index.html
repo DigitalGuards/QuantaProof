@@ -132,7 +132,7 @@
           machine. The verifier is written in Hyperion and the proof system is hash-based from the
           prover to the bridge, so the proofs are post-quantum by construction. One verification of
           the c3 preset costs <span class="n n-key">2,178,874</span> gas at 2<sup>12</sup> trace
-          rows and <span class="n n-key">4,463,257</span> gas at 2<sup>20</sup>, within the
+          rows and <span class="n n-key">4,393,186</span> gas at 2<sup>20</sup>, within the
           <span class="n">20,000,000</span> gas block cap.
         </p>
         <p>
@@ -228,36 +228,36 @@
                   <code>fib_c3_n20</code>
                   <span class="cell-note">34 queries, 2<sup>20</sup> rows</span>
                 </th>
-                <td class="num">105,873</td>
-                <td class="num">4,463,257</td>
-                <td class="num">2,710,754</td>
+                <td class="num">103,217</td>
+                <td class="num">4,393,186</td>
+                <td class="num">2,684,291</td>
               </tr>
               <tr>
                 <th scope="row">
                   <code>fib_c2_n20</code>
                   <span class="cell-note">50 queries, log_blowup 2, 2<sup>20</sup> rows</span>
                 </th>
-                <td class="num">134,801</td>
-                <td class="num">5,920,483 *</td>
-                <td class="num">3,696,128</td>
+                <td class="num">136,529</td>
+                <td class="num">5,965,791 *</td>
+                <td class="num">3,713,050</td>
               </tr>
               <tr>
                 <th scope="row">
                   <code>fib_c1_n12</code>
                   <span class="cell-note">100 queries, log_blowup 1, 2<sup>12</sup> rows</span>
                 </th>
-                <td class="num">82,672</td>
-                <td class="num">4,937,007</td>
-                <td class="num">3,561,810</td>
+                <td class="num">81,744</td>
+                <td class="num">4,906,439</td>
+                <td class="num">3,545,739</td>
               </tr>
               <tr>
                 <th scope="row">
                   <code>fib_c1_n20</code>
                   <span class="cell-note">100 queries, 2<sup>20</sup> rows</span>
                 </th>
-                <td class="num">226,641</td>
-                <td class="num">10,534,049 *</td>
-                <td class="num">6,807,827</td>
+                <td class="num">226,385</td>
+                <td class="num">10,524,466 *</td>
+                <td class="num">6,801,639</td>
               </tr>
             </tbody>
           </table>
@@ -275,8 +275,8 @@
         <p>
           <strong>Block cap.</strong> 40 of the 44 measured cells sit at or below the
           <span class="n">8,000,000</span> gas target. The largest,
-          <code>fib_c1-binary_n20</code> with a 388 KB proof, takes
-          <span class="n">17,065,391</span> gas, 85 percent of the
+          <code>fib_c1-binary_n20</code> with a 387 KB proof, takes
+          <span class="n">17,319,104</span> gas, 87 percent of the
           <span class="n">20,000,000</span> consensus block cap.
         </p>
         <p>
@@ -287,10 +287,10 @@
           verifier's own execution at 2<sup>12</sup> rows.
         </p>
         <p>
-          <strong>Code size and tests.</strong> The verifier is <span class="n">14,458</span> bytes
+          <strong>Code size and tests.</strong> The verifier is <span class="n">14,850</span> bytes
           of runtime code against a <span class="n">24,576</span>-byte cap. It accepts every valid
           vector of the sixteen presets and rejects every mutated vector with its recorded custom
-          error. 618 unit tests check the JavaScript references against the Rust vectors on a stock
+          error. 741 unit tests check the JavaScript references against the Rust vectors on a stock
           machine; the contract suites run against a live QRVM.
         </p>
         <p>

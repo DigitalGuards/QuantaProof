@@ -13,11 +13,11 @@ Two limits apply to a single `verify` transaction on QRL 2.0:
 1. The transaction pool refuses transactions above 131,072 bytes
    (`txMaxSize = 4 * txSlotSize` in the go-qrl legacy pool, without a CLI flag).
    With 7,690 bytes of envelope and ABI overhead, the largest proof that fits
-   is 123,382 bytes. In the report, c3 at 2^20 (105,873 bytes) fits; c2 at
+   is 123,382 bytes. In the report, c3 at 2^20 (103,217 bytes) fits; c2 at
    2^20, c1 at 2^16 and every binary preset at 2^16 or larger do not.
 2. The consensus block gas cap of 20,000,000 and the project target of 8M for
    one verification. Four of the 44 measured cells exceed 8M; none exceeds the
-   cap (worst: c1-binary at 2^20, 17.07M).
+   cap (worst: c1-binary at 2^20, 17.32M).
 
 Staging removes both limits at the cost of several transactions per proof,
 each paying its own base cost and each replaying the transcript prefix.

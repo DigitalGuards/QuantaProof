@@ -11,12 +11,12 @@ Status: the verifier, the prover, the vectors, the fact registry and the bridge 
 | Cell                       | Proof bytes | Transaction gas | Inside the verifier |
 | -------------------------- | ----------: | --------------: | ------------------: |
 | `fib_c3_n12` (34 queries)  |      43,152 |       2,178,874 |           1,445,661 |
-| `fib_c3_n20`               |     105,873 |       4,463,257 |           2,710,754 |
-| `fib_c2_n20` (50 queries)  |     134,801 |       5,920,483 |           3,696,128 |
-| `fib_c1_n12` (100 queries) |      82,672 |       4,937,007 |           3,561,810 |
-| `fib_c1_n20`               |     226,641 |      10,534,049 |           6,807,827 |
+| `fib_c3_n20`               |     103,217 |       4,393,186 |           2,684,291 |
+| `fib_c2_n20` (50 queries)  |     136,529 |       5,965,791 |           3,713,050 |
+| `fib_c1_n12` (100 queries) |      81,744 |       4,906,439 |           3,545,739 |
+| `fib_c1_n20`               |     226,385 |      10,524,466 |           6,801,639 |
 
-40 of the 44 measured cells sit at or below the 8,000,000 target; the largest, `fib_c1-binary_n20` (388 KB proof), takes 17,065,391 gas, 85 percent of the 20,000,000 block cap. The current runtime code is 14,646 bytes (cap 24,576). Two facts from the measurements shape the L2 design: calldata is 20 to 43 percent of a verification transaction, and the execution client's transaction pool refuses transactions above 131,072 bytes, so proofs above about 123 KB (c1 from n = 16, c2 at n = 20, every binary-folding preset from n = 16) need a raised pool cap or staged verification before they can be submitted as one transaction.
+40 of the 44 measured cells sit at or below the 8,000,000 target; the largest, `fib_c1-binary_n20` (387 KB proof), takes 17,319,104 gas, 87 percent of the 20,000,000 block cap. The current runtime code is 14,850 bytes (cap 24,576). Two facts from the measurements shape the L2 design: calldata is 20 to 43 percent of a verification transaction, and the execution client's transaction pool refuses transactions above 131,072 bytes, so proofs above about 123 KB (c1 from n = 16, c2 at n = 20, every binary-folding preset from n = 16) need a raised pool cap or staged verification before they can be submitted as one transaction.
 
 ## Design invariants
 
