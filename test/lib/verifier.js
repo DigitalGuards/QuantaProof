@@ -18,6 +18,7 @@ const fri = require('./fri');
 const air = require('./fibonacciAir');
 const layout = require('./layout');
 const merkle = require('./merkle');
+const { programIdentifier } = require('./programId');
 const { bytesToHex, efStr, fStr } = require('./vectors');
 
 class VerifyError extends Error {
@@ -60,6 +61,12 @@ function verifyDecoded(cfg, proof, publicValues) {
   const h = n + cfg.logBlowup;
   const q = cfg.numQueries;
   const ch = new Challenger();
+
+  // Transcript step 0: domain separation. The program identifier binds the
+  // AIR, the field, the hash suite, the layout and every parameter before
+  // anything is sampled (PROTOCOL.md section 5).
+  const programId = programIdentifier(cfg);
+  ch.observeDigest(programId, 'program_identifier');
 
   // Instance and first commitment.
   ch.observeField(BigInt(n), 'degree_bits');
@@ -230,6 +237,7 @@ function verifyDecoded(cfg, proof, publicValues) {
   return {
     layout: proof.layout,
     proofId: proof.proofId,
+    programIdentifier: bytesToHex(programId),
     transcript: ch.events,
     challenges: {
       alpha: efStr(alpha),

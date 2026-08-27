@@ -95,18 +95,18 @@ test('worked example of PROTOCOL.md section 11.2 (fib_c3_n10)', () => {
   assert.deepEqual(layout.logArities, [3, 3, 1]);
   const [trace, quotient] = layout.blocks;
   assert.deepEqual([trace.rowsOffset, trace.sibCountOffset, trace.siblingsOffset], [422, 966, 968]);
-  assert.equal(trace.sibCount, 250);
-  assert.equal(trace.end, 8968);
-  assert.deepEqual([quotient.rowsOffset, quotient.sibCountOffset], [8968, 9512]);
-  assert.equal(quotient.end, 17514);
+  assert.equal(trace.sibCount, 239);
+  assert.equal(trace.end, 8616);
+  assert.deepEqual([quotient.rowsOffset, quotient.sibCountOffset], [8616, 9160]);
+  assert.equal(quotient.end, 16810);
   const [r0, r1, r2] = layout.rounds;
   assert.deepEqual(
     [r0.siblingValuesOffset, r0.sibCountOffset, r0.sibCount, r0.end],
-    [17514, 21322, 148, 26060]
+    [16810, 20618, 137, 25004]
   );
-  assert.deepEqual([r1.siblingValuesOffset, r1.sibCount, r1.end], [26060, 52, 31534]);
-  assert.deepEqual([r2.siblingValuesOffset, r2.sibCount, r2.end], [31534, 24, 32848]);
-  assert.equal(layout.totalLen, 32848);
+  assert.deepEqual([r1.siblingValuesOffset, r1.sibCount, r1.end], [25004, 44, 30222]);
+  assert.deepEqual([r2.siblingValuesOffset, r2.sibCount, r2.end], [30222, 26, 31600]);
+  assert.equal(layout.totalLen, 31600);
 });
 
 test('prefix offsets are contiguous (layout.rs prefix_offsets_are_contiguous)', () => {

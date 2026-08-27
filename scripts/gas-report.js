@@ -74,24 +74,24 @@ const FAMILIES = [
 // docs/VERIFIER.md section 5.2, which is where it is regenerated.
 const PHASES_FIB_C3_N12 = {
   source:
-    'docs/VERIFIER.md section 5.2 (FriHarness.verifyTimed, test/contracts/fri.test.js), measured before the arity-schedule fix of commit 144f74f, which adds under 1k gas to the prepare phase',
+    'docs/VERIFIER.md section 5.2 (FriHarness.verifyTimed, test/contracts/fri.test.js), measured on 2026-08-27 after the program-identifier observation (transcript step 0)',
   columns: ['runs 200', 'runs 1000000', 'via-IR (runs 200)', 'Share (runs 200)'],
   rows: [
-    ['prepare (parse, scan, tables, prefix decode)', '87,821', '86,515', '103,116', '6.3 %'],
-    ['absorbInstance (transcript 1 to 10, selectors)', '8,235', '7,951', '8,035', '0.6 %'],
+    ['prepare (parse, scan, tables, prefix decode)', '88,606', '87,300', '103,796', '6.4 %'],
+    ['absorbInstance (transcript 0 to 10, selectors)', '8,726', '8,409', '8,550', '0.6 %'],
     ['checkConstraints', '4,194', '4,182', '3,377', '0.3 %'],
     ['friTranscript (betas, final poly, PoW, 34 indices)', '18,765', '18,189', '17,656', '1.4 %'],
-    ['inputBlocks (sort, 68 leaf hashes, two walks)', '263,593', '239,766', '271,723', '19.0 %'],
+    ['inputBlocks (sort, 68 leaf hashes, two walks)', '263,915', '240,370', '271,921', '19.0 %'],
     ['reducedOpenings (34 points, 68 inversions, 34 ro)', '113,497', '111,841', '107,416', '8.2 %'],
     [
       'foldChains (102 rounds of arity 8, 34 final checks)',
-      '726,197',
-      '705,445',
-      '671,657',
+      '726,179',
+      '705,427',
+      '671,639',
       '52.3 %',
     ],
-    ['roundBlocks (three walks)', '166,809', '151,377', '171,739', '12.0 %'],
-    ['Sum', '1,389,111', '1,325,266', '1,354,719', '100 %'],
+    ['roundBlocks (three walks)', '164,544', '149,706', '169,634', '11.9 %'],
+    ['Sum', '1,388,426', '1,325,424', '1,353,989', '100 %'],
     ['Calldata (transaction)', '694,372', '694,372', '694,372', ''],
   ],
 };

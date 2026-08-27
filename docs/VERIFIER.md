@@ -14,7 +14,7 @@ covers how the Hyperion code computes it. Executable specification:
 | `lib/ProofLayout.hyp`                     | library             | Header decode, exact-length rule, absolute calldata offsets of every block, the canonical scan of every field element region, `proofId`.                                                                                                                              |
 | `air/FibonacciAir.hyp`                    | library             | Trace-domain selectors at `zeta` (one batch inversion), the five constraints in emission order, the `alpha` accumulator, the quotient recomposition, `OodPointInDomain` and `OodMismatch`.                                                                            |
 | `lib/FriVerifier.hyp`                     | library             | The PCS side over one memory context: FRI transcript, input batches, reduced openings, fold chains with the final polynomial check, per-round Merkle checks. Reuses `Goldilocks`, `Fp2`, `KeccakChallenger` and `MerkleMultiProof` unchanged.                         |
-| `StarkVerifier.hyp` (`StarkVerifierCore`) | abstract contract   | The flow of PROTOCOL.md section 12 parameterised by `ProofLayout.Params` at run time: decode and scan, instance transcript (steps 1 to 10), constraint check, `FriVerifier.verifyFri`.                                                                                |
+| `StarkVerifier.hyp` (`StarkVerifierCore`) | abstract contract   | The flow of PROTOCOL.md section 12 parameterised by `ProofLayout.Params` at run time: decode and scan, instance transcript (steps 0 to 10), constraint check, `FriVerifier.verifyFri`.                                                                                |
 | `StarkVerifier.hyp` (`StarkVerifier`)     | deployable contract | Binds one preset through six compile-time constants (`LOG_BLOWUP`, `LOG_FINAL_POLY_LEN`, `MAX_LOG_ARITY`, `NUM_QUERIES`, `COMMIT_POW_BITS`, `QUERY_POW_BITS`; committed values = preset c3), exposes `PARAMS()` and `verify(bytes,bytes)`. One deployment per preset. |
 | `test/FriHarness.hyp`                     | test contract       | Inherits `StarkVerifierCore`; exposes the layout, `proofId`, the canonical scan, the chain-derived challenges, every reduced opening, `foldRow`, every fold chain step with its leaf digest and gas, `verifyFri` and the whole flow timed per phase.                  |
 
@@ -43,7 +43,7 @@ The data flow of one `verify(proof, publicValues)` call:
    product tables and the coset factor table (section 2), then
    `decodePrefix` turns the opened values and the final polynomial into
    numbers.
-5. `_absorbInstance`: transcript steps 1 to 10 through `KeccakChallenger`
+5. `_absorbInstance`: transcript steps 0 to 10 through `KeccakChallenger`
    (roots, public values and opened values are observed straight from
    calldata with `observeCalldata`; their wire form is the observed form),
    `FibonacciAir.selectors` right after `zeta` (`OodPointInDomain`),
@@ -225,7 +225,7 @@ all with query PoW 16 bits; the sweep cells are c3 with `max_log_arity = a` and
 | fib_c2_n10        |      36,432 |      582,336 |    2,173,128 / 2,279,256 / 1,618,446 |        2,108,482 / 2,214,506 / 1,553,788 |             2,132,402 / 2,196,265 / 1,531,934 |
 | fib_c2_n12        |      53,936 |      861,432 |    2,782,275 / 2,877,658 / 1,969,892 |        2,698,558 / 2,793,837 / 1,886,163 |             2,731,692 / 2,766,516 / 1,852,132 |
 | fib_c3_n10        |      32,848 |      525,256 |    1,742,388 / 1,843,274 / 1,240,505 |        1,689,051 / 1,789,833 / 1,187,156 |             1,714,123 / 1,776,496 / 1,170,734 |
-| fib_c3_n12        |      43,440 |      694,372 |    2,104,922 / 2,184,393 / 1,447,427 |        2,041,137 / 2,120,504 / 1,382,845 |             2,070,463 / 2,100,365 / 1,357,961 |
+| fib_c3_n12        |      43,152 |      689,904 |    2,099,786 / 2,178,874 / 1,445,661 |        2,036,871 / 2,115,855 / 1,382,734 |             2,065,306 / 2,095,093 / 1,357,271 |
 | fib_c1-binary_n12 |      95,634 |    1,526,068 |    6,185,471 / 6,385,270 / 4,763,083 |        5,955,387 / 6,155,082 / 4,532,987 |             6,123,256 / 6,218,807 / 4,579,071 |
 | fib_c2-binary_n12 |      75,090 |    1,198,408 |    3,884,157 / 4,049,935 / 2,761,910 |        3,735,761 / 3,901,435 / 2,613,502 |             3,853,139 / 3,936,179 / 2,636,608 |
 | fib_c3-binary_n12 |      69,810 |    1,114,196 |    3,167,190 / 3,324,433 / 2,122,236 |        3,041,582 / 3,198,721 / 1,996,616 |             3,146,579 / 3,226,645 / 2,014,259 |
@@ -265,16 +265,16 @@ the sum is the verifier's execution without the external-call framing):
 
 | Phase                                               |  runs 200 | runs 1000000 | via-IR (runs 200) | Share (runs 200) |
 | --------------------------------------------------- | --------: | -----------: | ----------------: | ---------------: |
-| prepare (parse, scan, tables, prefix decode)        |    87,821 |       86,515 |           103,116 |            6.3 % |
-| absorbInstance (transcript 1 to 10, selectors)      |     8,235 |        7,951 |             8,035 |            0.6 % |
+| prepare (parse, scan, tables, prefix decode)        |    88,606 |       87,300 |           103,796 |            6.4 % |
+| absorbInstance (transcript 0 to 10, selectors)      |     8,726 |        8,409 |             8,550 |            0.6 % |
 | checkConstraints                                    |     4,194 |        4,182 |             3,377 |            0.3 % |
 | friTranscript (betas, final poly, PoW, 34 indices)  |    18,765 |       18,189 |            17,656 |            1.4 % |
-| inputBlocks (sort, 68 leaf hashes, two walks)       |   263,593 |      239,766 |           271,723 |           19.0 % |
+| inputBlocks (sort, 68 leaf hashes, two walks)       |   263,915 |      240,370 |           271,921 |           19.0 % |
 | reducedOpenings (34 points, 68 inversions, 34 ro)   |   113,497 |      111,841 |           107,416 |            8.2 % |
-| foldChains (102 rounds of arity 8, 34 final checks) |   726,197 |      705,445 |           671,657 |           52.3 % |
-| roundBlocks (three walks)                           |   166,809 |      151,377 |           171,739 |           12.0 % |
-| Sum                                                 | 1,389,111 |    1,325,266 |         1,354,719 |            100 % |
-| Calldata (transaction)                              |   694,372 |      694,372 |           694,372 |                  |
+| foldChains (102 rounds of arity 8, 34 final checks) |   726,179 |      705,427 |           671,639 |           52.3 % |
+| roundBlocks (three walks)                           |   164,544 |      149,706 |           169,634 |           11.9 % |
+| Sum                                                 | 1,388,426 |    1,325,424 |         1,353,989 |            100 % |
+| Calldata (transaction)                              |   689,904 |      689,904 |           689,904 |                  |
 
 Per (query, round) cost of `foldRound` (row assembly, leaf hash, decode, fold,
 state update) and of the final polynomial check, runs 200, averaged over every

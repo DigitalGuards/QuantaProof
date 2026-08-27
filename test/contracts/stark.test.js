@@ -210,6 +210,15 @@ test('StarkVerifier', { skip, timeout: 3600000 }, async (t) => {
           programIdentifier(cfg),
           `programIdentifier of preset ${presetKey(cfg)}`
         );
+        // The exposed identifier is the one the prover observed as transcript
+        // step 0 (the vectors of this preset all carry it).
+        for (const { baseName, vector } of presets.get(presetKey(cfg)).entries) {
+          assert.equal(
+            vector.programIdentifier,
+            programIdentifier(cfg),
+            `${baseName}: vector programIdentifier`
+          );
+        }
       }
       const sizes = [...deployed.values()].map((v) => v.runtimeBytes);
       t.diagnostic(

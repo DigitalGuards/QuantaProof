@@ -13,8 +13,9 @@ import "./air/FibonacciAir.hyp";
 /// @notice The verification flow of docs/PROTOCOL.md section 12 for the
 ///         Fibonacci AIR, parameterised at run time by `ProofLayout.Params`
 ///         so that one implementation serves every preset: decode and scan
-///         the proof, absorb the instance (transcript steps 1 to 10), check
-///         the constraint identity, then hand the context to `FriVerifier`.
+///         the proof, absorb the program identifier and the instance
+///         (transcript steps 0 to 10), check the constraint identity, then
+///         hand the context to `FriVerifier`.
 /// @dev Abstract so the deployable contract binds the preset through
 ///      compile-time constants (`StarkVerifier` below) while the FRI harness
 ///      binds it through calldata. Every failure is a custom error; the
@@ -26,6 +27,62 @@ import "./air/FibonacciAir.hyp";
 abstract contract StarkVerifierCore {
     /// @notice Wire size of the public values: three field elements.
     uint512 internal constant PV_BYTES = 24;
+    /// @notice Byte length of the program identifier preimage: the 19-byte
+    ///         label and seven packed `uint512` words (docs/PROTOCOL.md 1.3).
+    uint512 internal constant PROGRAM_ID_PREIMAGE_BYTES = 467;
+
+    /// @dev The canonical program identifier for `p`, right-aligned as
+    ///      assembly `keccak256` returns it: the digest of the packed label
+    ///      `QSTARK-FIBONACCI-v1` (the 19 ASCII bytes
+    ///      0x51535441524B2D4649424F4E414343492D7631), then `PV_BYTES` and
+    ///      the six parameters, each `uint512` as 64 big-endian bytes at
+    ///      offset `19 + 64 k`. This is the preimage of
+    ///      `StarkVerifier.programIdentifier()` (`abi.encodePacked` of the
+    ///      compile-time constants), evaluated on the run-time parameter
+    ///      struct so that `FriHarness` derives the same value; the contract
+    ///      suite checks both against the vectors for every preset. Written
+    ///      in Yul because the legacy code generator's packed encoder costs
+    ///      about 3,500 gas for this preimage against about 500 here. The
+    ///      preimage is built in the unallocated region above the free
+    ///      memory pointer and is dead once hashed.
+    function _programIdentifierWord(ProofLayout.Params memory p) internal pure returns (uint512 d) {
+        assembly ("memory-safe") {
+            let ptr := mload(0x80)
+            // 19 label bytes left-aligned in the first word (512 - 152 bits).
+            mstore(ptr, shl(360, 0x51535441524B2D4649424F4E414343492D7631))
+            mstore(add(ptr, 19), PV_BYTES)
+            mstore(add(ptr, 83), mload(p))
+            mstore(add(ptr, 147), mload(add(p, 0x40)))
+            mstore(add(ptr, 211), mload(add(p, 0x80)))
+            mstore(add(ptr, 275), mload(add(p, 0xc0)))
+            mstore(add(ptr, 339), mload(add(p, 0x100)))
+            mstore(add(ptr, 403), mload(add(p, 0x140)))
+            d := keccak256(ptr, PROGRAM_ID_PREIMAGE_BYTES)
+        }
+    }
+
+    /// @dev `_programIdentifierWord` as the left-aligned `bytes32` that
+    ///      `IStarkVerifier.programIdentifier()` exposes.
+    function _programIdentifier(ProofLayout.Params memory p) internal pure returns (bytes32 id) {
+        uint512 d = _programIdentifierWord(p);
+        assembly ("memory-safe") {
+            id := shl(256, d)
+        }
+    }
+
+    /// @dev Transcript step 0 (docs/PROTOCOL.md section 5): the 32 raw bytes
+    ///      of the program identifier are the first observation, before the
+    ///      instance, so a proof made for one AIR, layout or parameter set
+    ///      never replays under another (Least Authority Plonky3 audit, issue
+    ///      B: a transcript that starts with prover-controlled data has no
+    ///      domain separation). Same byte stream as the prover, the mirror
+    ///      and the JS reference.
+    function _observeProgramIdentifier(
+        KeccakChallenger.State memory ch,
+        ProofLayout.Params memory p
+    ) internal pure {
+        KeccakChallenger.observeDigest(ch, _programIdentifierWord(p));
+    }
 
     /// @dev Decode (BadVersion, BadHeader, BadLength), scan every element
     ///      (NonCanonicalElement), validate the public values (BadLength,
@@ -48,16 +105,18 @@ abstract contract StarkVerifierCore {
         FriVerifier.decodePrefix(c);
     }
 
-    /// @dev Transcript steps 1 to 10: the three instance elements, the trace
-    ///      root, the public values, `alpha`, the quotient root, `zeta` (and
-    ///      the selectors, which reject a `zeta` on the trace domain),
-    ///      `zeta_next = zeta * g_n`, the opened values.
+    /// @dev Transcript steps 0 to 10: the program identifier, the three
+    ///      instance elements, the trace root, the public values, `alpha`,
+    ///      the quotient root, `zeta` (and the selectors, which reject a
+    ///      `zeta` on the trace domain), `zeta_next = zeta * g_n`, the opened
+    ///      values.
     function _absorbInstance(
         FriVerifier.Ctx memory c,
         uint512 pvOff
     ) internal view returns (FibonacciAir.Selectors memory s) {
         KeccakChallenger.State memory ch = c.ch;
         ProofLayout.Layout memory lay = c.lay;
+        _observeProgramIdentifier(ch, c.prm);
         uint512 n = lay.degreeBits;
         KeccakChallenger.observeU64LE(ch, n);
         KeccakChallenger.observeU64LE(ch, n);

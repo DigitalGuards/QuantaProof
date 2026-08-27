@@ -39,7 +39,12 @@ deviation.
 | FRI parameters  | `p3_fri::FriParameters { log_blowup, log_final_poly_len, max_log_arity, num_queries, commit_proof_of_work_bits, query_proof_of_work_bits, mmcs }` (`p3-fri/src/config.rs:10-23`) | `query_pow` = `query_proof_of_work_bits`, `commit_pow` = `commit_proof_of_work_bits` |
 
 The tooling wraps the inner `HashChallenger` in a byte-transparent `LoggingChallenger` that
-forwards every byte unchanged; proofs and transcripts are identical with and without it.
+forwards every byte unchanged; proofs and transcripts are identical with and without it. The
+challenger handed to `StarkConfig` is constructed by the tooling
+(`prover/stark-prover/src/config.rs::build_config`) and already holds the 32 bytes of the program
+identifier of section 1.3 in its input buffer (transcript step 0, section 5); the unmodified
+upstream `prove` and `verify` clone that template through `initialise_challenger` and continue
+from it.
 
 ### 1.2 Presets
 
@@ -77,6 +82,23 @@ byte length. Trace length stays in the proof header because one deployment
 accepts several supported lengths. `scripts/lib/presets.js::programIdFor`
 reproduces the formula. The verifier address remains part of every registry
 fact key, so the identifier complements the code binding.
+
+The identifier is also the transcript's domain separator: every party observes
+its 32 raw bytes as transcript step 0 (section 5), before `degree_bits`, so a
+proof produced for one AIR, layout or parameter set never verifies under
+another. The preimage is 467 bytes: the 19 ASCII bytes of the label
+`QSTARK-FIBONACCI-v1` (`51535441524b2d4649424f4e414343492d7631`), then `24`,
+`log_blowup`, `log_final_poly_len`, `max_log_arity`, `num_queries`,
+`commit_proof_of_work_bits` and `query_proof_of_work_bits`, each right-aligned
+in a 64-byte word. `prover/stark-prover/src/config.rs::program_identifier`,
+`test/lib/programId.js` and `StarkVerifierCore._programIdentifier` compute the
+same value, and every vector records it as `programIdentifier` (section 13):
+
+| Preset | Identifier                                                           |
+| ------ | -------------------------------------------------------------------- |
+| c1     | `0xf229ff0379f9c9b18f0e864063233cf5ad918a7fa28e46fd3d2f5d437c4711cb` |
+| c2     | `0x382d87b1e36d10731f13016f85a2d21570a3e02d21c62a847ed46647d8cf1f3d` |
+| c3     | `0x2d01b82c3e39759e2d2772e2d0b28277832bddd37668756c2fee577d48169634` |
 
 ## 2. Notation and wire encodings
 
@@ -117,7 +139,9 @@ buffer of bytes:
    input buffer becomes exactly `D` (drained, then extended with the 32 digest bytes) and the
    output buffer becomes `D` (`hash_challenger.rs:36-43`, `130-137`). Then one byte is popped from
    the END of the output buffer.
-3. The initial state is empty: the first flush hashes exactly the bytes observed so far.
+3. The initial state is empty (`HashChallenger::new(vec![], Keccak256Hash)`): the first flush
+   hashes exactly the bytes observed so far, and the first bytes observed are the 32 bytes of the
+   program identifier (section 5, step 0).
 
 `SerializingChallenger64` (`p3-challenger/src/serializing_challenger.rs`):
 
@@ -145,15 +169,25 @@ buffer of bytes:
 
 The verifier (`p3-uni-stark/src/verifier.rs:287-561`, `p3-fri/src/two_adic_pcs.rs:684-715`,
 `p3-fri/src/verifier.rs:158-437`) and the prover (`p3-uni-stark/src/prover.rs:224-395`,
-`p3-fri/src/prover.rs:43-160`, `192-286`) execute the same sequence. Byte counts are for the
-Fibonacci AIR (width 2, three public values, one quotient chunk).
+`p3-fri/src/prover.rs:43-160`, `192-286`) execute the same sequence from step 1 on. Step 0 is
+QuantaStark's own: the tooling performs it on the challenger template before upstream code runs
+(section 1.1), and the mirror, the JS reference and the contracts perform it first. Byte counts
+are for the Fibonacci AIR (width 2, three public values, one quotient chunk).
 
+0. observe the 32 raw bytes of the program identifier (section 1.3): domain separation. Upstream
+   rc.1 starts its transcript with `degree_bits`, so with an empty initial state the first flush
+   would hash prover-controlled data only and nothing would bind a proof to the AIR, the hash
+   suite, the layout or the parameter set (Least Authority, Plonky3 audit, November 2024, issue
+   B, "Fiat-Shamir initialization is incomplete"). `config.rs::build_config`,
+   `mirror.rs::mirror_verify_raw`, `test/lib/verifier.js` and
+   `StarkVerifierCore._observeProgramIdentifier` (`KeccakChallenger.observeDigest` of the
+   right-aligned digest, the same 32 bytes) all perform it.
 1. observe `F(degree_bits)` (`verifier.rs:412`)
 2. observe `F(base_degree_bits)`; equals `degree_bits` because `is_zk = 0` (`verifier.rs:413`)
 3. observe `F(preprocessed_width)`, always `F(0)` (`verifier.rs:414`)
 4. observe `trace_root` (32 bytes, `verifier.rs:420`)
 5. observe `public_values[0..3]` (3 F, `verifier.rs:424`)
-6. sample `alpha` (EF, `verifier.rs:430`); this is the first flush, over the 80 bytes of steps 1 to 5
+6. sample `alpha` (EF, `verifier.rs:430`); this is the first flush, over the 112 bytes of steps 0 to 5
 7. observe `quotient_root` (32 bytes, `verifier.rs:431`)
 8. sample `zeta` (EF, `verifier.rs:442`)
 9. require `zeta^(2^n) != 1` (`verifier.rs:447-449`, `OodPointInDomain`) and set
@@ -171,13 +205,14 @@ commit_pow_witness[r])`; sample `beta[r]` (EF) (`verifier.rs:292-306`)
     between the samples, so the groups run through successive `keccak256(D)` chains
 
 Observed transcript of `test/vectors/fib_c3_n10.json` (n = 10, R = 3, lf = 3, Q = 34):
-flush[0] hashes 80 bytes (steps 1 to 5) and serves `alpha`; flush[1] hashes 64 bytes
-(`D0 || quotient_root`) and serves `zeta`; flush[2] hashes 128 bytes (`D1 || openings`) and
-serves `fri_alpha`; flush[3..6) hash 64 bytes each (`D || fri_commit[r]`) and serve the betas;
-flush[6] hashes 192 bytes (`D5 || final_poly (128) || log_arity (24) || query_pow_witness (8)`)
-and serves the query PoW group and the first three indices; flush[7..15) are the `keccak256(D)`
-chain that serves the remaining 31 indices (4 per flush). In total 464 bytes are observed and
-376 bytes are sampled; the raw byte transcript has 14 alternating observe/sample runs.
+flush[0] hashes 112 bytes (the program identifier, then steps 1 to 5) and serves `alpha`;
+flush[1] hashes 64 bytes (`D0 || quotient_root`) and serves `zeta`; flush[2] hashes 128 bytes
+(`D1 || openings`) and serves `fri_alpha`; flush[3..6) hash 64 bytes each (`D || fri_commit[r]`)
+and serve the betas; flush[6] hashes 192 bytes
+(`D5 || final_poly (128) || log_arity (24) || query_pow_witness (8)`) and serves the query PoW
+group and the first three indices; flush[7..15) are the `keccak256(D)` chain that serves the
+remaining 31 indices (4 per flush). In total 496 bytes are observed and 376 bytes are sampled;
+the raw byte transcript has 14 alternating observe/sample runs.
 
 ## 6. Domains, coset, opening points
 
@@ -351,7 +386,8 @@ field elements (little-endian) except `sib_count`, which is a big-endian u16.
 | `pEnd = 171 + 41 R + 16 * 2^lf` |           | end of the prefix                                                       |
 
 `proofId = keccak256(proof[0..pEnd])`. Every transcript input of sections 5.1 to 5.15 except the
-public values lives in the prefix.
+public values lives in the prefix; the program identifier of step 0 is a constant of the
+deployment and travels in no proof.
 
 ### 11.2 Query data
 
@@ -371,10 +407,11 @@ zero-pads, the verifier must compute the expected length from the header and the
 fields (each read at an offset that is itself within bounds) before reading any element.
 
 Worked example (`fib_c3_n10`, R = 3, lf = 3, Q = 34): `pEnd = 422`; trace rows 422..966,
-`sib_count` at 966 (= 250), siblings 968..8968; quotient rows 8968..9512, `sib_count` at 9512
-(= 250), siblings 9514..17514; round 0 (arity 8) sibling values 17514..21322 (34 * 7 * 16),
-`sib_count` at 21322 (= 148), siblings 21324..26060; round 1 (arity 8) 26060..31534 (52
-siblings); round 2 (arity 2) 31534..32848 (24 siblings); total 32848 bytes.
+`sib_count` at 966 (= 239), siblings 968..8616; quotient rows 8616..9160, `sib_count` at 9160
+(= 239), siblings 9162..16810; round 0 (arity 8) sibling values 16810..20618 (34 * 7 * 16),
+`sib_count` at 20618 (= 137), siblings 20620..25004; round 1 (arity 8) 25004..30222 (44
+siblings); round 2 (arity 2) 30222..31600 (26 siblings); total 31600 bytes. The sibling counts
+depend on the sampled query indices, so they changed with the transcript of schema 2.
 
 ### 11.3 Decoding rules and error precedence
 
@@ -399,7 +436,7 @@ The on-chain verifier and the mirror run these steps in this order. The order fi
 a malformed proof raises and is part of the contract:
 
 1. Decode (section 11.3): `BadVersion`, `BadHeader`, `BadLength`, `NonCanonicalElement`.
-2. Transcript steps 1 to 10; `OodPointInDomain` after `zeta`.
+2. Transcript steps 0 to 10; `OodPointInDomain` after `zeta`.
 3. Constraint identity (section 10): `OodMismatch`. This runs before any FRI work because it
    needs only the prefix and fails fast.
 4. Transcript steps 11 to 16: `PowFailed` (commit PoW rounds first, then the query PoW).
@@ -433,17 +470,20 @@ are unreachable by mutating a valid proof (they need a transcript output in a se
 ## 13. Vector files
 
 `test/vectors/fib_<preset>_n<N>.json` (tracked for `N <= 12`; larger sizes go to
-`test/vectors/large/`, which is gitignored) with `schema: 1`:
+`test/vectors/large/`, which is gitignored) with `schema: 2` (schema 1 had no
+`programIdentifier` and its transcripts started at step 1; the prover refuses to read it):
 
 - `plonky3Version`, `name`, `config` (`logBlowup`, `logFinalPolyLen`, `maxLogArity`,
-  `numQueries`, `commitPowBits`, `queryPowBits`), `air: "fibonacci"`, `degreeBits`,
+  `numQueries`, `commitPowBits`, `queryPowBits`), `programIdentifier` (the `0x`-hex of
+  section 1.3 for `config`, observed as transcript step 0), `air: "fibonacci"`, `degreeBits`,
   `publicValues` (decimal strings), `proofHex`, `publicValuesHex`, `proofLength`, `proofId`.
 - `layout`: `pEnd`, `prefix` offsets, `blocks[]` (`name`, `rowsOffset`, `rowsLen`,
   `sibCountOffset`, `siblingsOffset`, `sibCount`, `end`) and `rounds[]` (`logArity`,
   `siblingValuesOffset`, `siblingValuesLen`, `sibCountOffset`, `siblingsOffset`, `sibCount`, `end`).
 - `transcript[]`: events `{op: observe|flush|sample_u64|sample_field|sample_bits|check_pow, label, ...}`;
   `observe` and `sample_u64` carry the bytes, the others annotate them (`sample_u64.bytes` are
-  the eight bytes in the order popped; `value` is their little-endian u64).
+  the eight bytes in the order popped; `value` is their little-endian u64). The first event is
+  the `observe` labelled `program_identifier` whose bytes equal `programIdentifier`.
 - `challenges`: `alpha`, `zeta`, `zetaNext`, `friAlpha`, `betas[]`, `indices[]`.
 - `openInputs[]`: per query `index`, `x`, `denomZeta`, `denomZetaNext`, their inverses,
   `traceRow`, `quotientRow`, `reducedOpening`.
@@ -457,7 +497,7 @@ are unreachable by mutating a valid proof (they need a transcript output in a se
 
 Field elements are decimal strings, `EF` values are `[c0, c1]` pairs, bytes and digests are
 `0x`-hex, offsets and indices are JSON numbers. Mutated vectors carry `name`, `source`, the
-parameters, `proofHex`, `publicValuesHex`, `proofLength` and
+parameters, `programIdentifier`, `proofHex`, `publicValuesHex`, `proofLength` and
 `expected: {valid: false, error, mutation}`.
 
 ## 14. Deviations from the plan
@@ -476,3 +516,12 @@ parameters, `proofHex`, `publicValuesHex`, `proofLength` and
 - The plan's `checkPow(0, w)` no-op, END-of-digest group order, 2^-32 rejection sampling and
   `sample_bits` consuming a full u64 group were all confirmed by the logged transcript.
 - The `sizes` gas model is the plan's formula; measured values replace it in `docs/GAS-REPORT.md`.
+- Transcript domain separation (2026-08-27, vector schema 2): the plan and upstream rc.1 start
+  the transcript with `degree_bits`. Least Authority's audit of Plonky3 (November 2024) lists
+  this as issue B, "Fiat-Shamir initialization is incomplete", and recommends absorbing a domain
+  separator and the configuration before sampling anything. QuantaStark now observes the program
+  identifier of section 1.3 as step 0 on every side (section 5); the calldata layout, the
+  transcript from step 1 on and the check order are unchanged. A bare upstream rc.1 verifier
+  with an empty initial state therefore rejects QuantaStark proofs, and a QuantaStark verifier
+  rejects proofs made without the step; the Rust tooling keeps upstream `prove` and `verify`
+  unmodified by placing the identifier in the challenger template they clone.

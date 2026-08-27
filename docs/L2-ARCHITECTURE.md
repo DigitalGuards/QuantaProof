@@ -48,7 +48,7 @@ set for payments first and treat a RISC-V zkVM as a later programmability step.
 
 The numbers that decide this:
 
-- One c3 verification costs 2.10M gas at a 2^12 trace (measured, direct call, 43,440
+- One c3 verification costs 2.10M gas at a 2^12 trace (measured, direct call, 43,152
   proof bytes, runs 200) and 4.14M gas at 2^20 (measured, direct call, 105,873
   bytes, runs 1000000; 4.32M through the gas meter; 4.30M by the runs-200 model).
   Both sit far below the 8M target and the 20M block cap. Calldata is 22 to 34
@@ -95,12 +95,12 @@ settings are 2 to 6 percent cheaper (`docs/VERIFIER.md` section 5.1).
 | Cell      | Proof bytes | Calldata gas |  estimate |   gasUsed |     inner | Calldata share of gasUsed |
 | --------- | ----------: | -----------: | --------: | --------: | --------: | ------------------------: |
 | c1 n = 10 |      54,672 |      873,612 | 3,750,528 | 3,884,092 | 2,926,926 |                    22.5 % |
-| c1 n = 12 |      82,672 |    1,320,236 | 4,795,125 | 4,936,222 | 3,561,025 |                    26.7 % |
-| c2 n = 10 |      36,432 |      582,336 | 2,173,128 | 2,279,256 | 1,618,446 |                    25.5 % |
-| c2 n = 12 |      53,936 |      861,432 | 2,782,275 | 2,877,658 | 1,969,892 |                    29.9 % |
-| c3 n = 10 |      32,848 |      525,256 | 1,742,388 | 1,843,274 | 1,240,505 |                    28.5 % |
-| c3 n = 12 |      43,440 |      694,372 | 2,104,922 | 2,184,393 | 1,446,642 |                    31.8 % |
-| c3-binary |      69,810 |    1,114,196 | 3,167,190 | 3,324,433 | 2,122,236 |                    33.5 % |
+| c1 n = 12 |      81,744 |    1,306,020 | 4,766,815 | 4,906,439 | 3,545,739 |                    26.6 % |
+| c2 n = 10 |      36,016 |      576,080 | 2,161,178 | 2,226,848 | 1,612,215 |                    25.9 % |
+| c2 n = 12 |      49,968 |      798,196 | 2,678,984 | 2,768,302 | 1,924,901 |                    28.8 % |
+| c3 n = 10 |      31,600 |      505,304 | 1,706,725 | 1,765,951 | 1,223,274 |                    28.6 % |
+| c3 n = 12 |      43,152 |      689,904 | 2,099,786 | 2,178,874 | 1,445,661 |                    31.7 % |
+| c3-binary |      67,986 |    1,085,152 | 3,125,346 | 3,242,734 | 2,107,120 |                    33.5 % |
 
 `c3-binary` is c3 at `n = 12` with arity 2 (nine rounds where c3 has three): arity 8
 folding is cheaper on chain in both bytes and compute, so the arity sweep settled
@@ -157,11 +157,11 @@ largest at every size:
 
 | Preset | n = 10 | n = 12 |  n = 16 |  n = 20 |
 | ------ | -----: | -----: | ------: | ------: |
-| c1     | 54,672 | 82,672 | 147,462 | 226,641 |
-| c2     | 36,432 | 53,936 |  90,918 | 134,801 |
-| c3     | 32,848 | 43,440 |  71,494 | 105,873 |
+| c1     | 53,904 | 81,744 | 143,814 | 226,385 |
+| c2     | 36,016 | 49,968 |  88,838 | 136,529 |
+| c3     | 31,600 | 43,152 |  69,510 | 103,217 |
 
-(`c3-binary` at n = 16: 128,862 bytes.) The `n = 16` and `n = 20` vectors were
+(`c3-binary` at n = 16: 127,614 bytes.) The `n = 16` and `n = 20` vectors were
 produced by the prover during this milestone and live in the untracked
 `test/vectors/large/`; the same numbers come out of
 `cargo run --release --manifest-path prover/Cargo.toml -- sizes --preset c3 --log-n 20 --vector <file>`.
@@ -225,7 +225,7 @@ runs-200 model:
 | c3        | 71,494 / 3.05M measured         | 105,873 / 4.14M measured         | ~144,800 / 5.60M     | ~189,300 / 7.09M     |
 | c2        | 90,918 / 4.07M measured         | 134,801 / 5.71M (refused, size)  | ~199,900 / 7.75M     | ~262,300 / 9.85M     |
 | c1        | 147,462 / 7.36M (refused, size) | 226,641 / 10.15M (refused, size) | ~349,100 / 14.06M    | ~465,700 / 18.0M     |
-| c3-binary | 128,862 / 5.22M (refused, size) |                                  |                      |                      |
+| c3-binary | 127,614 / 5.22M (refused, size) |                                  |                      |                      |
 
 `docs/GAS-REPORT.md` extrapolates n = 24 by scaling the plan formula with the
 measured-to-formula ratio of the largest measured cell and lands at 5.61M for c3,

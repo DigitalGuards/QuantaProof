@@ -6,8 +6,11 @@
 //! unmodified; the verifier-side recording is the ground truth that `docs/PROTOCOL.md` and the
 //! mirror in `mirror.rs` are checked against.
 //!
-//! Logging depth: the challenger stored inside a `StarkConfig` is the template (depth 0).
-//! `initialise_challenger` clones it once (depth 1); only depth-1 instances write to the log.
+//! Logging depth: the challenger stored inside a `StarkConfig` is the template (depth 0). It is
+//! built by `config::build_config`, which observes the program identifier on it (transcript
+//! step 0) before the config reaches upstream code. `initialise_challenger` clones it once
+//! (depth 1): the working instance of `prove` and `verify`. Both depths write to the log, so the
+//! log holds the identifier followed by everything the working instance observed and sampled.
 //! The proof-of-work grinder clones the depth-1 instance for every candidate witness; those
 //! clones are depth 2 and silent, so the log only contains the transcript that both parties
 //! actually run.
@@ -128,9 +131,9 @@ impl<Inner> LoggingChallenger<Inner> {
         }
     }
 
-    /// Whether this instance writes to the log.
+    /// Whether this instance writes to the log: the template and its first clone do.
     pub fn is_recording(&self) -> bool {
-        self.depth == 1
+        self.depth <= 1
     }
 }
 
@@ -147,7 +150,7 @@ impl<Inner: Clone> Clone for LoggingChallenger<Inner> {
 impl<Inner: CanObserve<u8>> CanObserve<u8> for LoggingChallenger<Inner> {
     fn observe(&mut self, value: u8) {
         self.inner.observe(value);
-        if self.depth == 1 {
+        if self.is_recording() {
             self.log
                 .lock()
                 .expect("transcript log poisoned")
@@ -157,7 +160,7 @@ impl<Inner: CanObserve<u8>> CanObserve<u8> for LoggingChallenger<Inner> {
 
     fn observe_slice(&mut self, values: &[u8]) {
         self.inner.observe_slice(values);
-        if self.depth == 1 {
+        if self.is_recording() {
             self.log
                 .lock()
                 .expect("transcript log poisoned")
@@ -169,7 +172,7 @@ impl<Inner: CanObserve<u8>> CanObserve<u8> for LoggingChallenger<Inner> {
 impl<Inner: CanSample<u8>> CanSample<u8> for LoggingChallenger<Inner> {
     fn sample(&mut self) -> u8 {
         let value = self.inner.sample();
-        if self.depth == 1 {
+        if self.is_recording() {
             self.log
                 .lock()
                 .expect("transcript log poisoned")
@@ -187,24 +190,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_depth_one_records() {
+    fn template_and_first_clone_record_deeper_clones_stay_silent() {
         let log = new_log();
-        let template = LoggingChallenger::new(
+        let mut template = LoggingChallenger::new(
             HashChallenger::<u8, Keccak256Hash, 32>::new(Vec::new(), Keccak256Hash {}),
             Arc::clone(&log),
         );
+        assert!(template.is_recording());
+        template.observe_slice(&[7, 8]);
         let mut active = template.clone();
         assert!(active.is_recording());
         active.observe(1u8);
         active.observe_slice(&[2, 3]);
         let mut silent = active.clone();
+        assert!(!silent.is_recording());
         silent.observe(9u8);
         let _ = silent.sample();
         let s = active.sample();
         let recorded = take_log(&log);
         assert_eq!(
             recorded.events,
-            vec![RawEvent::Observe(vec![1, 2, 3]), RawEvent::Sample(vec![s])]
+            vec![
+                RawEvent::Observe(vec![7, 8, 1, 2, 3]),
+                RawEvent::Sample(vec![s])
+            ]
         );
     }
 }

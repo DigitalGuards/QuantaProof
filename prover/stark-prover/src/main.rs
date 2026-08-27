@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Parser, Subcommand};
-use stark_prover::config::{FriConfig, all_presets, preset, preset_names};
+use stark_prover::config::{FriConfig, all_presets, preset, preset_names, program_identifier};
 use stark_prover::constants::write_constants;
 use stark_prover::layout::decode_raw;
 use stark_prover::mirror::{TranscriptEvent, mirror_verify};
@@ -282,16 +282,21 @@ fn run_verify(file: &Path) -> Result<()> {
     let pv = v.public_values()?;
     let cfg = v.config;
     println!(
-        "{}: {} bytes, preset {}, n = {}, expected {}",
+        "{}: {} bytes, preset {}, n = {}, programId {}, expected {}",
         v.name,
         bytes.len(),
         cfg.preset_name().unwrap_or("custom"),
         v.degree_bits,
+        v.program_identifier,
         if v.expected.valid {
             "valid".to_string()
         } else {
             format!("invalid ({})", v.expected.error.clone().unwrap_or_default())
         }
+    );
+    ensure!(
+        v.program_identifier == stark_prover::mirror::hex0x(&program_identifier(&cfg)),
+        "programIdentifier differs from the identifier derived from the vector's config"
     );
     let decoded = decode_raw(&bytes, &cfg);
     let upstream = match &decoded {

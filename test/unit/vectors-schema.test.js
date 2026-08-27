@@ -10,6 +10,7 @@ const { keccak_256 } = require('@noble/hashes/sha3');
 
 const V = require('../lib/vectors');
 const L = require('../lib/layout');
+const { programIdentifierHex } = require('../lib/programId');
 const { verifyProof } = require('../lib/verifier');
 
 const valid = V.loadValidVectors();
@@ -38,6 +39,7 @@ const VALID_KEYS = [
   'name',
   'openInputs',
   'plonky3Version',
+  'programIdentifier',
   'proofHex',
   'proofId',
   'proofLength',
@@ -53,6 +55,7 @@ const MUTATION_KEYS = [
   'expected',
   'name',
   'plonky3Version',
+  'programIdentifier',
   'proofHex',
   'proofLength',
   'publicValues',
@@ -93,6 +96,7 @@ const MUTATION_ERRORS = {
 const SECTIONS = [
   'layout',
   'proofId',
+  'programIdentifier',
   'transcript',
   'challenges',
   'constraints',
@@ -124,6 +128,13 @@ function checkCommon(vector, baseName) {
   assert.equal(vector.name, baseName);
   assert.equal(vector.air, 'fibonacci');
   checkConfig(vector.config);
+  // Schema 2: the program identifier of the vector's parameter set.
+  assert.match(vector.programIdentifier, /^0x[0-9a-f]{64}$/);
+  assert.equal(
+    vector.programIdentifier,
+    programIdentifierHex(vector.config),
+    'programIdentifier == keccak256 of the packed label, 24 and the six parameters'
+  );
   assert.ok(Number.isInteger(vector.degreeBits) && vector.degreeBits >= 1);
   assert.equal(vector.publicValues.length, 3);
   assert.ok(vector.publicValues.every(isDecimal));
@@ -163,6 +174,14 @@ describe('valid vectors', () => {
       );
 
       assert.ok(vector.transcript.length > 0);
+      // Transcript step 0 (PROTOCOL.md section 5): the identifier is observed
+      // before anything else.
+      assert.deepEqual(vector.transcript[0], {
+        op: 'observe',
+        label: 'program_identifier',
+        bytes: vector.programIdentifier,
+      });
+      assert.equal(vector.transcript[1].label, 'degree_bits');
       for (const e of vector.transcript) {
         assert.ok(
           ['observe', 'flush', 'sample_u64', 'sample_field', 'sample_bits', 'check_pow'].includes(

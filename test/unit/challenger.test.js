@@ -80,7 +80,10 @@ test('worked example of PROTOCOL.md section 5 (fib_c3_n10)', () => {
   const flushInputs = ch.events
     .filter((e) => e.op === 'flush')
     .map((e) => V.hexToBytes(e.input).length);
-  assert.deepEqual(flushInputs, [80, 64, 128, 64, 64, 64, 192, 32, 32, 32, 32, 32, 32, 32, 32]);
+  // flush[0] hashes the program identifier (32) and steps 1 to 5 (80).
+  assert.deepEqual(flushInputs, [112, 64, 128, 64, 64, 64, 192, 32, 32, 32, 32, 32, 32, 32, 32]);
+  const first = ch.events.filter((e) => e.op === 'flush')[0];
+  assert.equal(first.input.slice(0, 66), entry.vector.programIdentifier);
   let observed = 0;
   let sampled = 0;
   const runs = [];
@@ -93,7 +96,7 @@ test('worked example of PROTOCOL.md section 5 (fib_c3_n10)', () => {
       if (runs[runs.length - 1] !== 'sample') runs.push('sample');
     }
   }
-  assert.equal(observed, 464);
+  assert.equal(observed, 496);
   assert.equal(sampled, 376);
   assert.equal(runs.length, 14);
 });

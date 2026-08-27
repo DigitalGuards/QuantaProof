@@ -1,4 +1,4 @@
-//! JSON test vectors (`schema: 1`), generation pipeline and file naming.
+//! JSON test vectors (`schema: 2`), generation pipeline and file naming.
 
 use std::path::{Path, PathBuf};
 
@@ -7,7 +7,7 @@ use p3_field::PrimeCharacteristicRing;
 use serde::{Deserialize, Serialize};
 
 use crate::challenger::RawTranscript;
-use crate::config::{FriConfig, PLONKY3_VERSION, Proof, Val};
+use crate::config::{FriConfig, PLONKY3_VERSION, Proof, Val, program_identifier};
 use crate::layout::{Layout, decode_raw, public_values_bytes, read_f};
 use crate::mirror::{
     Challenges, Constraints, FinalPolyCheck, FoldStep, MerkleBlock, MirrorOutput, OpenInput,
@@ -16,8 +16,9 @@ use crate::mirror::{
 use crate::prove::{ProveOutput, prove_fibonacci, verify_upstream};
 use crate::serialize::serialize_proof;
 
-/// The vector schema version.
-pub const SCHEMA: u32 = 1;
+/// The vector schema version. Schema 2 (transcript domain separation) adds `programIdentifier`
+/// and starts every transcript with the `program_identifier` observation.
+pub const SCHEMA: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +41,8 @@ pub struct VectorFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     pub config: FriConfig,
+    /// `0x`-hex of `config::program_identifier(config)`: transcript step 0 of this vector.
+    pub program_identifier: String,
     pub air: String,
     pub degree_bits: usize,
     pub public_values: Vec<String>,
@@ -187,6 +190,7 @@ pub fn valid_vector(g: &Generated) -> VectorFile {
         name: g.name.clone(),
         source: None,
         config: g.cfg,
+        program_identifier: hex0x(&program_identifier(&g.cfg)),
         air: "fibonacci".to_string(),
         degree_bits: g.degree_bits,
         public_values: g.public_values.iter().map(f_str).collect(),
@@ -224,6 +228,7 @@ pub fn mutated_vector(
         name: format!("{}__{}", base.name, mutation),
         source: Some(base.name.clone()),
         config: base.config,
+        program_identifier: base.program_identifier.clone(),
         air: base.air.clone(),
         degree_bits: base.degree_bits,
         public_values: public_values.iter().map(f_str).collect(),
@@ -260,7 +265,18 @@ pub fn write_vector(path: &Path, v: &VectorFile, pretty: bool) -> Result<()> {
     Ok(())
 }
 
+/// Read a vector file. The schema is checked before the full parse, so an older file reports its
+/// schema version as the error (a plain parse would report the first missing field).
 pub fn read_vector(path: &Path) -> Result<VectorFile> {
     let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+    let value: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let schema = value.get("schema").and_then(serde_json::Value::as_u64);
+    ensure!(
+        schema == Some(u64::from(SCHEMA)),
+        "{}: vector schema {} (this build reads schema {SCHEMA}; regenerate the vectors)",
+        path.display(),
+        schema.map_or("missing".to_string(), |s| s.to_string())
+    );
+    serde_json::from_value(value).with_context(|| format!("parse {}", path.display()))
 }

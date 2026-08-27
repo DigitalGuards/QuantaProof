@@ -11,7 +11,8 @@
 //! malformed proof raises):
 //!
 //! 1. layout: version, header, exact length, canonical elements
-//! 2. transcript up to `zeta`, the out-of-domain check, `zeta_next`, the opened values
+//! 2. transcript: the program identifier (step 0), the instance up to `zeta`, the
+//!    out-of-domain check, `zeta_next`, the opened values
 //! 3. the constraint identity at `zeta` (`OodMismatch`)
 //! 4. FRI transcript: `fri_alpha`, per round commit / commit PoW / `beta`, final polynomial,
 //!    arities, query PoW (`PowFailed`), query indices
@@ -26,7 +27,7 @@ use p3_field::{Field, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
 use serde::{Deserialize, Serialize};
 
 use crate::challenger::RawTranscript;
-use crate::config::{Challenge, FriConfig, Val};
+use crate::config::{Challenge, FriConfig, Val, program_identifier};
 use crate::keccak::{keccak256, keccak256_concat};
 use crate::layout::{
     DIGEST_BYTES, GOLDILOCKS_P, Layout, LayoutError, RawProof, decode_raw, ef_bytes, ef_coeffs,
@@ -823,6 +824,10 @@ pub fn mirror_verify_raw(
     let q = cfg.num_queries;
     let num_rounds = raw.rounds.len();
     let mut ch = MirrorChallenger::new();
+
+    // Transcript step 0: domain separation. The program identifier binds the AIR, the field,
+    // the hash suite, the layout and every parameter before anything is sampled.
+    ch.observe("program_identifier", &program_identifier(cfg));
 
     // Instance and first commitment.
     ch.observe_field("degree_bits", &Val::from_usize(n));

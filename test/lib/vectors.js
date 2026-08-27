@@ -21,7 +21,9 @@ const LARGE_DIR = path.join(VECTORS_DIR, 'large');
 const PLONKY3_VERSION_FILE = path.join(__dirname, '..', '..', 'prover', 'PLONKY3_VERSION');
 
 // Vector schema version written by prover/stark-prover/src/vectors.rs.
-const SCHEMA = 1;
+// Schema 2 adds `programIdentifier` and the `program_identifier` transcript
+// step 0 (docs/PROTOCOL.md section 13).
+const SCHEMA = 2;
 
 // Every error name the verifier can raise (mirror.rs MirrorError::ALL_NAMES).
 const ERROR_NAMES = Object.freeze([

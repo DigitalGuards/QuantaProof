@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 use p3_fri::{FriFoldingStrategy, TwoAdicFriFolding};
 use stark_prover::challenger::RawEvent;
-use stark_prover::config::{Challenge, Val};
+use stark_prover::config::{Challenge, Val, program_identifier};
 use stark_prover::layout::{decode_raw, ef_from_coeffs};
 use stark_prover::mirror::{
     TranscriptEvent, fold_row_barycentric, fold_row_binary, mirror_verify, recompose_quotient,
@@ -33,15 +33,20 @@ fn mirror_transcript_equals_upstream_verifier_transcript() {
             g.mirror.raw_transcript, g.verifier_transcript,
             "{name}: mirror vs verifier"
         );
-        // The transcript starts with the three instance words, the trace root and the public
-        // values in one observe run, then samples alpha.
+        // The transcript starts with the program identifier, the three instance words, the
+        // trace root and the public values in one observe run, then samples alpha.
         let events = &g.verifier_transcript.events;
         match &events[0] {
             RawEvent::Observe(bytes) => {
-                assert_eq!(bytes.len(), 3 * 8 + 32 + 3 * 8, "{name}: first observe run");
-                assert_eq!(&bytes[..8], &(n as u64).to_le_bytes());
-                assert_eq!(&bytes[8..16], &(n as u64).to_le_bytes());
-                assert_eq!(&bytes[16..24], &0u64.to_le_bytes());
+                assert_eq!(
+                    bytes.len(),
+                    32 + 3 * 8 + 32 + 3 * 8,
+                    "{name}: first observe run"
+                );
+                assert_eq!(&bytes[..32], &program_identifier(&cfg), "{name}: step 0");
+                assert_eq!(&bytes[32..40], &(n as u64).to_le_bytes());
+                assert_eq!(&bytes[40..48], &(n as u64).to_le_bytes());
+                assert_eq!(&bytes[48..56], &0u64.to_le_bytes());
             }
             other => panic!("{name}: first event is not an observe run: {other:?}"),
         }
@@ -79,6 +84,7 @@ fn labelled_events_follow_the_protocol_order() {
         .collect();
     let rounds = cfg.arity_schedule(n).len();
     let mut expected: Vec<String> = [
+        "observe program_identifier",
         "observe degree_bits",
         "observe base_degree_bits",
         "observe preprocessed_width",

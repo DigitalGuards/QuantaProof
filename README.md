@@ -10,7 +10,7 @@ Status: the verifier, the prover, the vectors, the fact registry and the bridge 
 
 | Cell                       | Proof bytes | Transaction gas | Inside the verifier |
 | -------------------------- | ----------: | --------------: | ------------------: |
-| `fib_c3_n12` (34 queries)  |      43,440 |       2,185,178 |           1,447,427 |
+| `fib_c3_n12` (34 queries)  |      43,152 |       2,178,874 |           1,445,661 |
 | `fib_c3_n20`               |     105,873 |       4,463,257 |           2,710,754 |
 | `fib_c2_n20` (50 queries)  |     134,801 |       5,920,483 |           3,696,128 |
 | `fib_c1_n12` (100 queries) |      82,672 |       4,937,007 |           3,561,810 |

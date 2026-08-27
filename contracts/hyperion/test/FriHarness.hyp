@@ -88,6 +88,12 @@ contract FriHarness is StarkVerifierCore {
         return ProofLayout.proofId(ProofLayout.parse(base, length, paramsOf(args)));
     }
 
+    /// @notice The program identifier the core observes as transcript step 0
+    ///         for the parameters in `args` (docs/PROTOCOL.md section 1.3).
+    function programIdentifier(uint512[] calldata args) external pure returns (bytes32) {
+        return _programIdentifier(paramsOf(args));
+    }
+
     /// @notice The canonical scan alone; reverts NonCanonicalElement.
     function checkCanonical(
         bytes calldata proof,

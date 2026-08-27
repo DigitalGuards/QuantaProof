@@ -33,6 +33,7 @@ const skip = rpcUrl ? false : 'set STARK_RPC_URL to run against a node';
 const SIG = {
   layout: 'layout(bytes,uint512[])',
   proofId: 'proofId(bytes,uint512[])',
+  programIdentifier: 'programIdentifier(uint512[])',
   checkCanonical: 'checkCanonical(bytes,uint512[])',
   challenges: 'challenges(bytes,bytes,uint512[])',
   openInputs: 'openInputs(bytes,uint512[])',
@@ -241,6 +242,12 @@ test('FRI harness', { skip, timeout: 3600000 }, async (t) => {
 
   await t.test('transcript challenges match every vector', async () => {
     for (const { baseName, vector } of vectors) {
+      // Transcript step 0: the identifier the core observes for these parameters.
+      assert.equal(
+        await h.callOne(SIG.programIdentifier, [paramsArgs(vector.config)], 'bytes32'),
+        vector.programIdentifier,
+        `${baseName}: programIdentifier`
+      );
       const [out] = await h.call(
         SIG.challenges,
         [vector.proofHex, vector.publicValuesHex, paramsArgs(vector.config)],
